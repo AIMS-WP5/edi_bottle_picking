@@ -135,7 +135,7 @@ bool EdiBottlePickingUtils::pick_bottle()
 	if(debug_){
 		manipulator_.world_marker->prompt("press 'Next' to move std position after grasping");
 	}
-	success_ = manipulator_.predefined_pose("grasping_station");
+	success_ = manipulator_.predefined_pose("after_pickup");
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
