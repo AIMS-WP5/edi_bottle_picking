@@ -3,6 +3,7 @@
 
 #include <rclcpp/rclcpp.hpp>
 #include <manipulator_interface/manipulator_interface.h>
+#include <ur_msgs/srv/set_io.hpp>
 
 
 namespace edi_bottle_picking_utils
@@ -25,10 +26,12 @@ namespace edi_bottle_picking_utils
 
     bool put_back_on_table();
 
+    bool set_tool_output(int fun_val, int pin_val, float state_val);
 
 	private:
         manipulator_interface::ManipulatorInterface& manipulator_;
         bool debug_, success_;
+        rclcpp::Client<ur_msgs::srv::SetIO>::SharedPtr tool_io_client_;
 	};
 
 }

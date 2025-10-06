@@ -10,13 +10,36 @@ const rclcpp::Logger LOGGER = rclcpp::get_logger("edi_bottle_picking_utils");
 EdiBottlePickingUtils::EdiBottlePickingUtils(manipulator_interface::ManipulatorInterface& manipulator, bool debug)
     : manipulator_(manipulator), debug_(debug)
 {
-    // Constructor implementation  
+    // Constructor implementation
+	tool_io_client_ = manipulator.node_->create_client<ur_msgs::srv::SetIO>("/io_and_status_controller/set_io");
+	while (!tool_io_client_->wait_for_service(1s)) {
+		if (!rclcpp::ok()) {
+			RCLCPP_ERROR(LOGGER, "Client interrupted while waiting for service.");
+			rclcpp::shutdown();
+		}
+		RCLCPP_INFO(LOGGER, "Waiting for /set_io service...");
+    }
 
 }
 
 EdiBottlePickingUtils::~EdiBottlePickingUtils()
 {
     // Destructor implementation
+}
+
+bool EdiBottlePickingUtils::set_tool_output(int fun_val, int pin_val, float state_val)
+{
+	auto request = std::make_shared<ur_msgs::srv::SetIO::Request>();
+	request->fun = fun_val;
+	request->pin = pin_val;
+	request->state = state_val;
+
+	auto result_future = tool_io_client_->async_send_request(request);
+	auto result = result_future.get();
+	if (!result->success) {
+		RCLCPP_ERROR(LOGGER, "/set_io service call failed!");
+	}
+	return result->success;
 }
 
 geometry_msgs::msg::Pose EdiBottlePickingUtils::get_grasp_pose_topic()
@@ -64,12 +87,20 @@ bool EdiBottlePickingUtils::pick_bottle()
 	if(debug_){
 		manipulator_.world_marker->prompt("press 'Next' to open the gripper");
 	}	
-    if(manipulator_.activate_gripper(false) != moveit::core::MoveItErrorCode::SUCCESS){
-      RCLCPP_ERROR(LOGGER, "Pick action failed!");
-      return 0;
+    // if(manipulator_.activate_gripper(false) != moveit::core::MoveItErrorCode::SUCCESS){
+    //   RCLCPP_ERROR(LOGGER, "Pick action failed!");
+    //   return 0;
+	// } else {
+    //   RCLCPP_INFO(LOGGER, "Gripper opened!");
+    // }
+	// fun 1, pin 17 for suction, state 1.0 for on, 0.0 for off
+	success_ = set_tool_output(1, 17, 0.0);
+	if (!success_) {
+		RCLCPP_ERROR(LOGGER, "Pick action failed!");
+		return 0;
 	} else {
-      RCLCPP_INFO(LOGGER, "Gripper opened!");
-    }
+		RCLCPP_INFO(LOGGER, "Gripper not sucking!");
+	}
 
 	if(debug_){
 		manipulator_.world_marker->prompt("press 'Next' to get object grasp pose");
@@ -119,12 +150,20 @@ bool EdiBottlePickingUtils::pick_bottle()
 		manipulator_.world_marker->prompt("press 'Next' to close the gripper");
 	}
 
-	if(manipulator_.activate_gripper(true) != moveit::core::MoveItErrorCode::SUCCESS){
-      RCLCPP_ERROR(LOGGER, "Pick action failed!");
-      return 0;
+	// if(manipulator_.activate_gripper(true) != moveit::core::MoveItErrorCode::SUCCESS){
+    //   RCLCPP_ERROR(LOGGER, "Pick action failed!");
+    //   return 0;
+	// } else {
+    //   RCLCPP_INFO(LOGGER, "Gripper closed!");
+    // }
+	// fun 1, pin 17 for suction, state 1.0 for on, 0.0 for off
+	success_ = set_tool_output(1, 17, 1.0);
+	if (!success_) {
+		RCLCPP_ERROR(LOGGER, "Pick action failed!");
+		return 0;
 	} else {
-      RCLCPP_INFO(LOGGER, "Gripper closed!");
-    }
+		RCLCPP_INFO(LOGGER, "Gripper sucking!");
+	}
 
 	success_ = manipulator_.cartesian_goal(pick_poses[0]);
 	if(!success_){
@@ -154,12 +193,20 @@ bool EdiBottlePickingUtils::put_back_on_table()
 		RCLCPP_ERROR(LOGGER, "Putting back failed!");
         return 0;
 	}
-	if(manipulator_.activate_gripper(false) != moveit::core::MoveItErrorCode::SUCCESS){
-      RCLCPP_ERROR(LOGGER, "Putting back failed!");
-      return 0;
+	// if(manipulator_.activate_gripper(false) != moveit::core::MoveItErrorCode::SUCCESS){
+    //   RCLCPP_ERROR(LOGGER, "Putting back failed!");
+    //   return 0;
+	// } else {
+    //   RCLCPP_INFO(LOGGER, "Gripper opened!");
+    // }
+	// fun 1, pin 17 for suction, state 1.0 for on, 0.0 for off
+	success_ = set_tool_output(1, 17, 0.0);
+	if (!success_) {
+		RCLCPP_ERROR(LOGGER, "Putting back failed!");
+		return 0;
 	} else {
-      RCLCPP_INFO(LOGGER, "Gripper opened!");
-    }
+		RCLCPP_INFO(LOGGER, "Gripper not sucking!");
+	}
 
     return true;
 }
