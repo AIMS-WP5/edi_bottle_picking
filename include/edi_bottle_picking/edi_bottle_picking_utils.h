@@ -26,6 +26,7 @@ namespace edi_bottle_picking_utils
 
     bool put_back_on_table();
 
+    /** \brief Function to set I/O. Used to set tool digital output to turn suction on/off. */
     bool set_tool_output(int fun_val, int pin_val, float state_val);
 
 	private:
