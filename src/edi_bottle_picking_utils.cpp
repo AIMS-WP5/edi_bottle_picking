@@ -99,7 +99,7 @@ bool EdiBottlePickingUtils::pick_bottle()
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
 	} else {
-		RCLCPP_INFO(LOGGER, "Gripper not sucking!");
+		RCLCPP_INFO(LOGGER, "Suction disabled!");
 	}
 
 	if(debug_){
@@ -162,7 +162,7 @@ bool EdiBottlePickingUtils::pick_bottle()
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
 	} else {
-		RCLCPP_INFO(LOGGER, "Gripper sucking!");
+		RCLCPP_INFO(LOGGER, "Suction enabled!");
 	}
 
 	success_ = manipulator_.cartesian_goal(pick_poses[0]);
@@ -188,7 +188,7 @@ bool EdiBottlePickingUtils::put_back_on_table()
     if(debug_){
         manipulator_.world_marker->prompt("press 'Next' to place bottle back on the table");
     }
-	success_ = manipulator_.predefined_pose("blue");
+	success_ = manipulator_.predefined_pose("inter_floor_4");
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Putting back failed!");
         return 0;
@@ -205,7 +205,26 @@ bool EdiBottlePickingUtils::put_back_on_table()
 		RCLCPP_ERROR(LOGGER, "Putting back failed!");
 		return 0;
 	} else {
-		RCLCPP_INFO(LOGGER, "Gripper not sucking!");
+		RCLCPP_INFO(LOGGER, "Suction disabled!");
+	}
+
+	if(debug_){
+        manipulator_.world_marker->prompt("press 'Next' to blow off bottle");
+    }
+
+	success_ = set_tool_output(1, 16, 1.0);
+	if (!success_) {
+		RCLCPP_ERROR(LOGGER, "Putting back failed, but suction turned off!");
+		return 0;
+	} else {
+		RCLCPP_INFO(LOGGER, "Blow-off enabled");
+	}
+	success_ = set_tool_output(1, 16, 0.0);
+	if (!success_) {
+		RCLCPP_ERROR(LOGGER, "Putting back failed, blowoff still active!");
+		return 0;
+	} else {
+		RCLCPP_INFO(LOGGER, "Blow-off disabled");
 	}
 
     return true;
