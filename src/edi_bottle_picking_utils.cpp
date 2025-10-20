@@ -219,6 +219,7 @@ bool EdiBottlePickingUtils::put_back_on_table()
 	} else {
 		RCLCPP_INFO(LOGGER, "Blow-off enabled");
 	}
+	std::this_thread::sleep_for(100ms);
 	success_ = set_tool_output(1, 16, 0.0);
 	if (!success_) {
 		RCLCPP_ERROR(LOGGER, "Putting back failed, blowoff still active!");
