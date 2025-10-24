@@ -27,6 +27,9 @@ EdiBottlePickingUtils::~EdiBottlePickingUtils()
     // Destructor implementation
 }
 
+// fun 1
+// pin 17 for suction, 16 for blowoff
+// state 1.0 for on, 0.0 for off
 bool EdiBottlePickingUtils::set_tool_output(int fun_val, int pin_val, float state_val)
 {
 	auto request = std::make_shared<ur_msgs::srv::SetIO::Request>();
@@ -93,7 +96,6 @@ bool EdiBottlePickingUtils::pick_bottle()
 	// } else {
     //   RCLCPP_INFO(LOGGER, "Gripper opened!");
     // }
-	// fun 1, pin 17 for suction, state 1.0 for on, 0.0 for off
 	success_ = set_tool_output(1, 17, 0.0);
 	if (!success_) {
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
@@ -156,7 +158,6 @@ bool EdiBottlePickingUtils::pick_bottle()
 	// } else {
     //   RCLCPP_INFO(LOGGER, "Gripper closed!");
     // }
-	// fun 1, pin 17 for suction, state 1.0 for on, 0.0 for off
 	success_ = set_tool_output(1, 17, 1.0);
 	if (!success_) {
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
@@ -199,7 +200,6 @@ bool EdiBottlePickingUtils::put_back_on_table()
 	// } else {
     //   RCLCPP_INFO(LOGGER, "Gripper opened!");
     // }
-	// fun 1, pin 17 for suction, state 1.0 for on, 0.0 for off
 	success_ = set_tool_output(1, 17, 0.0);
 	if (!success_) {
 		RCLCPP_ERROR(LOGGER, "Putting back failed!");
