@@ -11,38 +11,11 @@ EdiBottlePickingUtils::EdiBottlePickingUtils(manipulator_interface::ManipulatorI
     : manipulator_(manipulator), debug_(debug)
 {
     // Constructor implementation
-	tool_io_client_ = manipulator.node_->create_client<ur_msgs::srv::SetIO>("/io_and_status_controller/set_io");
-	while (!tool_io_client_->wait_for_service(1s)) {
-		if (!rclcpp::ok()) {
-			RCLCPP_ERROR(LOGGER, "Client interrupted while waiting for service.");
-			rclcpp::shutdown();
-		}
-		RCLCPP_INFO(LOGGER, "Waiting for /set_io service...");
-    }
-
 }
 
 EdiBottlePickingUtils::~EdiBottlePickingUtils()
 {
     // Destructor implementation
-}
-
-// fun 1
-// pin 17 for suction, 16 for blowoff
-// state 1.0 for on, 0.0 for off
-bool EdiBottlePickingUtils::set_tool_output(int fun_val, int pin_val, float state_val)
-{
-	auto request = std::make_shared<ur_msgs::srv::SetIO::Request>();
-	request->fun = fun_val;
-	request->pin = pin_val;
-	request->state = state_val;
-
-	auto result_future = tool_io_client_->async_send_request(request);
-	auto result = result_future.get();
-	if (!result->success) {
-		RCLCPP_ERROR(LOGGER, "/set_io service call failed!");
-	}
-	return result->success;
 }
 
 geometry_msgs::msg::Pose EdiBottlePickingUtils::get_grasp_pose_topic()
@@ -96,7 +69,7 @@ bool EdiBottlePickingUtils::pick_bottle()
 	// } else {
     //   RCLCPP_INFO(LOGGER, "Gripper opened!");
     // }
-	success_ = set_tool_output(1, 17, 0.0);
+	success_ = manipulator_.activate_vacuum_gripper(false);
 	if (!success_) {
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
@@ -158,7 +131,7 @@ bool EdiBottlePickingUtils::pick_bottle()
 	// } else {
     //   RCLCPP_INFO(LOGGER, "Gripper closed!");
     // }
-	success_ = set_tool_output(1, 17, 1.0);
+	success_ = manipulator_.activate_vacuum_gripper(true);
 	if (!success_) {
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
@@ -200,32 +173,11 @@ bool EdiBottlePickingUtils::put_back_on_table()
 	// } else {
     //   RCLCPP_INFO(LOGGER, "Gripper opened!");
     // }
-	success_ = set_tool_output(1, 17, 0.0);
+	success_ = manipulator_.activate_vacuum_gripper(false);
 	if (!success_) {
 		RCLCPP_ERROR(LOGGER, "Putting back failed!");
-		return 0;
 	} else {
-		RCLCPP_INFO(LOGGER, "Suction disabled!");
-	}
-
-	if(debug_){
-        manipulator_.world_marker->prompt("press 'Next' to blow off bottle");
-    }
-
-	success_ = set_tool_output(1, 16, 1.0);
-	if (!success_) {
-		RCLCPP_ERROR(LOGGER, "Putting back failed, but suction turned off!");
-		return 0;
-	} else {
-		RCLCPP_INFO(LOGGER, "Blow-off enabled");
-	}
-	std::this_thread::sleep_for(100ms);
-	success_ = set_tool_output(1, 16, 0.0);
-	if (!success_) {
-		RCLCPP_ERROR(LOGGER, "Putting back failed, blowoff still active!");
-		return 0;
-	} else {
-		RCLCPP_INFO(LOGGER, "Blow-off disabled");
+		RCLCPP_INFO(LOGGER, "Releasing successful.");
 	}
 
     return true;

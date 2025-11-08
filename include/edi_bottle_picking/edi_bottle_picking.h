@@ -11,7 +11,6 @@
 #include <moveit/trajectory_processing/iterative_spline_parameterization.h>
 #include <moveit/trajectory_processing/iterative_time_parameterization.h>
 
-// #include "edi_robot_msgs/srv/named_object_pose_stamped.hpp"
 #include "control_msgs/action/gripper_command.hpp"
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <tf2_ros/transform_listener.h>
