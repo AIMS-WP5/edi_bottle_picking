@@ -79,7 +79,7 @@ bool GraspingTestUtils::pick_up()
 		RCLCPP_ERROR(LOGGER, "Grasp pose probably incorrect!");
 		return 0;
 	}
-	geometry_msgs::msg::Pose pick_pose = manipulator_.transform_pose("world", "realsense_435_on_robot", grasp_pose); //vai man vajag??
+	geometry_msgs::msg::Pose pick_pose = manipulator_.transform_pose("world", "realsense_455_on_stand", grasp_pose);
 
 	if(debug_){
 		manipulator_.world_marker->prompt("press 'Next' to add collision object");
