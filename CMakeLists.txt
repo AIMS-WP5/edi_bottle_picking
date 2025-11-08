@@ -33,6 +33,25 @@ ament_target_dependencies(
   edi_robot_msgs
 )
 
+add_executable(grasping_test src/grasping_test.cpp
+				   src/grasping_test_utils.cpp)
+
+target_include_directories(grasping_test PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+
+target_compile_features(grasping_test PUBLIC c_std_99 cxx_std_17)
+
+ament_target_dependencies(
+  grasping_test
+  rclcpp
+  moveit_ros_planning_interface
+  control_msgs
+  moveit_visual_tools
+  manipulator_interface
+  edi_robot_msgs
+)
+
 install(
   DIRECTORY include/
   DESTINATION include/${PROJECT_NAME}
@@ -41,6 +60,7 @@ install(
 install(
   TARGETS 
     edi_bottle_picking
+    grasping_test
   DESTINATION lib/${PROJECT_NAME})
 
 install(
