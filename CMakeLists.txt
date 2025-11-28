@@ -13,6 +13,7 @@ find_package(moveit_ros_planning_interface REQUIRED)
 find_package(control_msgs REQUIRED)
 find_package(moveit_visual_tools REQUIRED)
 find_package(edi_robot_msgs REQUIRED)
+find_package(yaml-cpp REQUIRED)
 
 add_executable(edi_bottle_picking src/edi_bottle_picking.cpp
 				   src/edi_bottle_picking_utils.cpp)
@@ -50,6 +51,7 @@ ament_target_dependencies(
   moveit_visual_tools
   manipulator_interface
   edi_robot_msgs
+  yaml-cpp
 )
 
 install(

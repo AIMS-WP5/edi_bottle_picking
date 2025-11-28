@@ -18,6 +18,9 @@
 #include <manipulator_interface/manipulator_interface.h>
 #include <edi_bottle_picking/grasping_test_utils.h>
 
+#include "yaml-cpp/yaml.h"
+#include <string>
+
 typedef boost::shared_ptr<moveit::planning_interface::MoveGroupInterface> MoveGroupPtr;
 typedef boost::shared_ptr<tf2_ros::TransformListener> tfListenerPtr;
 typedef boost::shared_ptr<tf2_ros::Buffer> tfBufferPtr;
