@@ -49,6 +49,60 @@ geometry_msgs::msg::Pose GraspingTestUtils::get_grasp_pose_topic()
 	return received_msg;
 }
 
+geometry_msgs::msg::Pose GraspingTestUtils::check_pose_angle(geometry_msgs::msg::Pose pose) {
+	// corrects grasping pose if the angle with the verical is too big
+
+	tf2::Quaternion q(
+		pose.orientation.x,
+		pose.orientation.y,
+		pose.orientation.z,
+		pose.orientation.w
+	);
+	tf2::Matrix3x3 R(q);
+	tf2::Vector3 z_world(0,0,1);
+	tf2::Vector3 z_gripper = R * z_world;
+	tf2::Vector3 z_world_neg(0,0,-1);
+	double dot_prod = z_gripper.normalized().dot(z_world_neg);
+	RCLCPP_INFO(LOGGER, "Dot prod: %f", dot_prod);
+	double angle_rad = std::acos(dot_prod);
+	RCLCPP_INFO(LOGGER, "Angle (rad): %f", angle_rad);
+	double angle_deg = angle_rad * 180.0 / M_PI;
+	RCLCPP_INFO(LOGGER, "Angle (deg): %f", angle_deg);
+
+	geometry_msgs::msg::Pose corrected_pose = pose;
+	const double limit_deg = 30;
+
+	if (angle_deg > limit_deg) {
+		tf2::Vector3 tilt_axis = z_world_neg.cross(z_gripper);  // perpendicular axis
+		if (tilt_axis.length() < 1e-6) {
+			// Edge case: perfectly aligned (or upside down)
+			tilt_axis = tf2::Vector3(1,0,0);
+		}
+		tilt_axis.normalize();
+
+		// Create a “max tilt” quaternion along the correct tilt axis
+		tf2::Quaternion q_tilt;
+		q_tilt.setRotation(tilt_axis, (180.0 - limit_deg) * M_PI / 180.0);
+
+		// yaw stays the same
+		double roll, pitch, yaw;
+		R.getRPY(roll, pitch, yaw);
+		tf2::Quaternion q_yaw;
+		q_yaw.setRPY(0, 0, yaw);
+
+		tf2::Quaternion q_final = q_yaw * q_tilt;
+		q_final.normalize();
+
+		corrected_pose.orientation.x = q_final.x();
+		corrected_pose.orientation.y = q_final.y();
+		corrected_pose.orientation.z = q_final.z();
+		corrected_pose.orientation.w = q_final.w();
+		RCLCPP_INFO(LOGGER, "Corrected pose angle.");
+	}
+
+	return corrected_pose;
+}
+
 bool GraspingTestUtils::pick_up()
 {
     if(debug_){
@@ -79,13 +133,24 @@ bool GraspingTestUtils::pick_up()
 		RCLCPP_ERROR(LOGGER, "Grasp pose probably incorrect!");
 		return 0;
 	}
-	geometry_msgs::msg::Pose pick_pose = manipulator_.transform_pose("world", "realsense_455_on_stand", grasp_pose);
+	geometry_msgs::msg::PoseStamped grasp_pose_stamped;
+	grasp_pose_stamped.pose = grasp_pose;
+	grasp_pose_stamped.header.frame_id = "realsense_455_on_stand";
+	// geometry_msgs::msg::Pose pick_pose = manipulator_.transform_pose("world", "realsense_455_on_stand", grasp_pose);
+	geometry_msgs::msg::PoseStamped pick_pose_stamped = manipulator_.transform_pose("world", grasp_pose_stamped);
+	geometry_msgs::msg::Pose pick_pose = pick_pose_stamped.pose;
+	if(debug_){
+		manipulator_.world_marker->prompt("press 'Next' to check pose angle");
+	}
+	pick_pose = check_pose_angle(pick_pose);
+	manipulator_.world_marker->publishAxisLabeled(pick_pose, "Corrected_object_pose");
+	manipulator_.world_marker->trigger();
 
 	if(debug_){
 		manipulator_.world_marker->prompt("press 'Next' to add collision object");
 	}
 	moveit_msgs::msg::CollisionObject coll_obj;
-	success_ = manipulator_.add_collision_object(pick_pose, "world", coll_obj);
+	success_ = manipulator_.add_collision_object_simple(pick_pose, "world", coll_obj);
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
@@ -94,9 +159,7 @@ bool GraspingTestUtils::pick_up()
 	if(debug_){
 		manipulator_.world_marker->prompt("press 'Next' to create pick moves for the object");
 	}
-	std::vector<geometry_msgs::msg::Pose> pick_poses = manipulator_.create_pick_moves(pick_pose);
-
-	manipulator_.check_pose(pick_poses);
+	std::vector<geometry_msgs::msg::Pose> pick_poses = manipulator_.create_pick_moves_simple(pick_pose);
 
 	success_ = manipulator_.cartesian_goal(pick_poses[0]);
 	if(!success_){
