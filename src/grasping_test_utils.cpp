@@ -18,22 +18,36 @@ GraspingTestUtils::~GraspingTestUtils()
     // Destructor implementation
 }
 
-geometry_msgs::msg::Pose GraspingTestUtils::get_grasp_pose_topic()
+geometry_msgs::msg::Pose GraspingTestUtils::get_grasp_pose_topic(std::string topic_name, bool stamped_topic, int timeout_sec)
 {
     auto node = rclcpp::Node::make_shared("tmp_sub_node");
-	geometry_msgs::msg::Pose received_msg;
-	bool received = false;
-    auto callback = [&received_msg, &received](geometry_msgs::msg::PoseStamped msg) {
+    geometry_msgs::msg::Pose received_msg;
+    bool received = false;
+
+    auto callback_pose_stamped = [&received_msg, &received](geometry_msgs::msg::PoseStamped msg) {
         received_msg = msg.pose;
-		received = true;
+        received = true;
     };
-    auto sub = node->create_subscription<geometry_msgs::msg::PoseStamped>("/grasp_pose", 10, callback);
+    auto sub_pose_stamped = node->create_subscription<geometry_msgs::msg::PoseStamped>(topic_name, 10, callback_pose_stamped);
+
+    auto callback_pose = [&received_msg, &received](geometry_msgs::msg::Pose msg) {
+        received_msg = msg;
+        received = true;
+    };
+    auto sub_pose = node->create_subscription<geometry_msgs::msg::Pose>(topic_name, 10, callback_pose);
+
+    if (stamped_topic) {
+        sub_pose.reset();
+    }
+    else {
+        sub_pose_stamped.reset();
+    }
 
     auto start = std::chrono::steady_clock::now();
     rclcpp::executors::SingleThreadedExecutor exec;
     exec.add_node(node);
 
-	std::chrono::milliseconds timeout = 5000ms;
+    std::chrono::milliseconds timeout = timeout_sec * 1000ms;
     while (rclcpp::ok() && !received) {
         exec.spin_some();
         if (std::chrono::steady_clock::now() - start > timeout) {
@@ -43,7 +57,7 @@ geometry_msgs::msg::Pose GraspingTestUtils::get_grasp_pose_topic()
     }
 
 	if (!received) {
-		RCLCPP_ERROR(LOGGER, "Grasp pose not received on topic /grasp_pose");
+		RCLCPP_ERROR(LOGGER, "Grasp pose not received on topic %s", topic_name.c_str());
 	}
 	
 	return received_msg;
@@ -128,7 +142,7 @@ bool GraspingTestUtils::pick_up()
 	if(debug_){
 		manipulator_.world_marker->prompt("press 'Next' to get object grasp pose");
 	}
-	geometry_msgs::msg::Pose grasp_pose = GraspingTestUtils::get_grasp_pose_topic();
+	geometry_msgs::msg::Pose grasp_pose = GraspingTestUtils::get_grasp_pose_topic("/grasp_pose", false, 10);
 	if (grasp_pose.position.z == 0.0) {
 		RCLCPP_ERROR(LOGGER, "Grasp pose probably incorrect!");
 		return 0;
@@ -139,10 +153,13 @@ bool GraspingTestUtils::pick_up()
 	// geometry_msgs::msg::Pose pick_pose = manipulator_.transform_pose("world", "realsense_455_on_stand", grasp_pose);
 	geometry_msgs::msg::PoseStamped pick_pose_stamped = manipulator_.transform_pose("world", grasp_pose_stamped);
 	geometry_msgs::msg::Pose pick_pose = pick_pose_stamped.pose;
+	manipulator_.world_marker->publishAxisLabeled(pick_pose, "Object_pose");
+	manipulator_.world_marker->trigger();
 	if(debug_){
 		manipulator_.world_marker->prompt("press 'Next' to check pose angle");
 	}
 	pick_pose = check_pose_angle(pick_pose);
+	// manipulator_.world_marker->deleteAllMarkers();
 	manipulator_.world_marker->publishAxisLabeled(pick_pose, "Corrected_object_pose");
 	manipulator_.world_marker->trigger();
 

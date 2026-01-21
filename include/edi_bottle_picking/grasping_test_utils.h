@@ -16,8 +16,12 @@ namespace grasping_test_utils
 
     bool pick_up();
 
-    /** \brief Function to get first grasp position published by GraspGen seen by RealSense 455 camera mounted on a stand */
-    geometry_msgs::msg::Pose get_grasp_pose_topic();
+    /** \brief Function to get first grasp position published by GraspGen seen by RealSense 455 camera mounted on a stand
+        \param topic_name which topic to listen to
+        \param stamped_topic if the topic is of type geometry_msgs::msg::PoseStamped, otherwise listens for geometry_msgs::msg::Pose
+        \param timeout_sec how many seconds to wait before timeout
+    */
+    geometry_msgs::msg::Pose get_grasp_pose_topic(std::string topic_name, bool stamped_topic, int timeout_sec = 5);
 
     bool put_down();
 
