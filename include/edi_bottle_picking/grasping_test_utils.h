@@ -25,8 +25,8 @@ namespace grasping_test_utils
 
     bool put_down();
 
-    /** \brief Function to check if the grasp pose is not off the vertical axis by more than 30 deg, and correct the pose if it is*/
-    geometry_msgs::msg::Pose check_pose_angle(geometry_msgs::msg::Pose pose);
+    /** \brief Function to check if the grasp pose is not off the vertical axis by more than the passed limit, and correct the pose if it is*/
+    geometry_msgs::msg::Pose check_pose_angle(geometry_msgs::msg::Pose pose, double limit_deg = 30);
 
 	private:
         manipulator_interface::ManipulatorInterface& manipulator_;

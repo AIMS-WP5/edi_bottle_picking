@@ -63,7 +63,7 @@ geometry_msgs::msg::Pose GraspingTestUtils::get_grasp_pose_topic(std::string top
 	return received_msg;
 }
 
-geometry_msgs::msg::Pose GraspingTestUtils::check_pose_angle(geometry_msgs::msg::Pose pose) {
+geometry_msgs::msg::Pose GraspingTestUtils::check_pose_angle(geometry_msgs::msg::Pose pose, double limit_deg) {
 	// corrects grasping pose if the angle with the verical is too big
 
 	tf2::Quaternion q(
@@ -84,7 +84,6 @@ geometry_msgs::msg::Pose GraspingTestUtils::check_pose_angle(geometry_msgs::msg:
 	RCLCPP_INFO(LOGGER, "Angle (deg): %f", angle_deg);
 
 	geometry_msgs::msg::Pose corrected_pose = pose;
-	const double limit_deg = 30;
 
 	if (angle_deg > limit_deg) {
 		tf2::Vector3 tilt_axis = z_world_neg.cross(z_gripper);  // perpendicular axis
@@ -94,24 +93,20 @@ geometry_msgs::msg::Pose GraspingTestUtils::check_pose_angle(geometry_msgs::msg:
 		}
 		tilt_axis.normalize();
 
-		// Create a “max tilt” quaternion along the correct tilt axis
-		tf2::Quaternion q_tilt;
-		q_tilt.setRotation(tilt_axis, (180.0 - limit_deg) * M_PI / 180.0);
+		double delta_rotation_deg = limit_deg - angle_deg;
+		double delta_rotation_rad = delta_rotation_deg * M_PI / 180.0;
+		RCLCPP_INFO(LOGGER, "Delta rotation: %f deg (%f rad)", delta_rotation_deg, delta_rotation_rad);
+		tf2::Quaternion rotation_quat;
+		rotation_quat.setRotation(tilt_axis, delta_rotation_rad);
+		tf2::Quaternion q_final = rotation_quat * q;
 
-		// yaw stays the same
-		double roll, pitch, yaw;
-		R.getRPY(roll, pitch, yaw);
-		tf2::Quaternion q_yaw;
-		q_yaw.setRPY(0, 0, yaw);
-
-		tf2::Quaternion q_final = q_yaw * q_tilt;
 		q_final.normalize();
 
 		corrected_pose.orientation.x = q_final.x();
 		corrected_pose.orientation.y = q_final.y();
 		corrected_pose.orientation.z = q_final.z();
 		corrected_pose.orientation.w = q_final.w();
-		RCLCPP_INFO(LOGGER, "Corrected pose angle.");
+		RCLCPP_INFO(LOGGER, "Corrected pose angle by %f deg", delta_rotation_deg);
 	}
 
 	return corrected_pose;
@@ -158,7 +153,7 @@ bool GraspingTestUtils::pick_up()
 	if(debug_){
 		manipulator_.world_marker->prompt("press 'Next' to check pose angle");
 	}
-	pick_pose = check_pose_angle(pick_pose);
+	pick_pose = check_pose_angle(pick_pose, 0);
 	// manipulator_.world_marker->deleteAllMarkers();
 	manipulator_.world_marker->publishAxisLabeled(pick_pose, "Corrected_object_pose");
 	manipulator_.world_marker->trigger();
