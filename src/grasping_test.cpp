@@ -15,6 +15,7 @@ std::string config_file_path = file_dir_path + "/../config/grasping_test_config.
 YAML::Node config = YAML::LoadFile(config_file_path);
 bool debug = config["debug"].as<bool>();
 int total_iterations = config["iterations"].as<int>();
+std::string grasp_pose_topic = config["grasp_pose_topic"].as<std::string>();
 
 int main(int argc, char ** argv)
 {
@@ -42,7 +43,7 @@ int main(int argc, char ** argv)
   ManipulatorInterface manipulator(application.node_, application.move_group_ptr, application.gripper_action_client_ptr, 
                                    application.tf_buffer_ptr);
 
-  GraspingTestUtils grasping_test_utils(manipulator, debug);
+  GraspingTestUtils grasping_test_utils(manipulator, grasp_pose_topic, debug);
 
   rclcpp::Duration d = rclcpp::Duration::from_seconds(1.0);
   if(!application.gripper_action_client_ptr->wait_for_action_server(d.to_chrono<std::chrono::duration<double>>())) {

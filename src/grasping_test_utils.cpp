@@ -1,16 +1,19 @@
 #include <edi_bottle_picking/grasping_test_utils.h>
 
 using namespace std::chrono_literals;
+using std::placeholders::_1;
 
 namespace grasping_test_utils
 {
 
 const rclcpp::Logger LOGGER = rclcpp::get_logger("grasping_test_utils");
 
-GraspingTestUtils::GraspingTestUtils(manipulator_interface::ManipulatorInterface& manipulator, bool debug)
+GraspingTestUtils::GraspingTestUtils(manipulator_interface::ManipulatorInterface& manipulator, std::string grasp_pose_topic, bool debug)
     : manipulator_(manipulator), debug_(debug)
 {
-    // Constructor implementation
+	sub_grasp_pose_ = manipulator.node_->create_subscription<geometry_msgs::msg::PoseStamped>(
+		grasp_pose_topic, 10, std::bind(&GraspingTestUtils::grasp_pose_callback, this, _1)
+	);
 }
 
 GraspingTestUtils::~GraspingTestUtils()
@@ -18,7 +21,7 @@ GraspingTestUtils::~GraspingTestUtils()
     // Destructor implementation
 }
 
-geometry_msgs::msg::Pose GraspingTestUtils::get_grasp_pose_topic(std::string topic_name, bool stamped_topic, int timeout_sec)
+geometry_msgs::msg::Pose GraspingTestUtils::get_next_published_pose(std::string topic_name, bool stamped_topic, int timeout_sec)
 {
     auto node = rclcpp::Node::make_shared("tmp_sub_node");
     geometry_msgs::msg::Pose received_msg;
@@ -137,7 +140,8 @@ bool GraspingTestUtils::pick_up()
 	if(debug_){
 		manipulator_.world_marker->prompt("press 'Next' to get object grasp pose");
 	}
-	geometry_msgs::msg::Pose grasp_pose = GraspingTestUtils::get_grasp_pose_topic("/grasp_pose", false, 10);
+	// geometry_msgs::msg::Pose grasp_pose = GraspingTestUtils::get_next_published_pose("/grasp_pose", false, 10);
+	geometry_msgs::msg::Pose grasp_pose = GraspingTestUtils::get_curr_grasp_pose();
 	if (grasp_pose.position.z == 0.0) {
 		RCLCPP_ERROR(LOGGER, "Grasp pose probably incorrect!");
 		return 0;
@@ -237,6 +241,16 @@ bool GraspingTestUtils::put_down()
 	}
 
 	return true;
+}
+
+geometry_msgs::msg::Pose GraspingTestUtils::get_curr_grasp_pose()
+{
+	return curr_grasp_pose_;
+}
+
+void GraspingTestUtils::grasp_pose_callback(const geometry_msgs::msg::PoseStamped::SharedPtr msg)
+{
+	curr_grasp_pose_ = msg->pose;
 }
 
 } // namespace grasping_test_utils
