@@ -56,6 +56,8 @@ int main(int argc, char ** argv)
 
   RCLCPP_INFO(LOGGER, "PLANNER FRAME: %s", application.move_group_ptr->getPlanningFrame().c_str());
 
+  grasping_test_utils.add_box();
+
   bool success;
   int iter_count = 0;
 

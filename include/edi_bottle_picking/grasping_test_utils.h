@@ -31,6 +31,8 @@ namespace grasping_test_utils
     geometry_msgs::msg::Pose get_curr_grasp_pose();
     void grasp_pose_callback(const geometry_msgs::msg::PoseStamped::SharedPtr msg);
 
+    bool add_box();
+
 	private:
         manipulator_interface::ManipulatorInterface& manipulator_;
         bool debug_, success_;

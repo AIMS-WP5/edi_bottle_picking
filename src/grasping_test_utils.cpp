@@ -21,6 +21,16 @@ GraspingTestUtils::~GraspingTestUtils()
     // Destructor implementation
 }
 
+bool GraspingTestUtils::add_box() {
+	moveit_msgs::msg::CollisionObject coll_obj;
+	geometry_msgs::msg::Pose pose;
+	pose.position.x = -0.55;
+	pose.position.y = -0.50;
+	pose.position.z = 0.93;
+	bool success = manipulator_.add_collision_box(pose, "world", coll_obj, 0.40, 0.30, 0.15, 0.015);
+	return success;
+}
+
 geometry_msgs::msg::Pose GraspingTestUtils::get_next_published_pose(std::string topic_name, bool stamped_topic, int timeout_sec)
 {
     auto node = rclcpp::Node::make_shared("tmp_sub_node");
@@ -162,20 +172,23 @@ bool GraspingTestUtils::pick_up()
 	manipulator_.world_marker->publishAxisLabeled(pick_pose, "Corrected_object_pose");
 	manipulator_.world_marker->trigger();
 
-	if(debug_){
-		manipulator_.world_marker->prompt("press 'Next' to add collision object");
-	}
 	moveit_msgs::msg::CollisionObject coll_obj;
 	success_ = manipulator_.add_collision_object_simple(pick_pose, "world", coll_obj);
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
 	}
-	
-	if(debug_){
-		manipulator_.world_marker->prompt("press 'Next' to create pick moves for the object");
-	}
+
 	std::vector<geometry_msgs::msg::Pose> pick_poses = manipulator_.create_pick_moves_simple(pick_pose);
+
+	if(debug_){
+		manipulator_.world_marker->prompt("press 'Next' to go above box");
+	}
+	success_ = manipulator_.predefined_pose("above_box_1");
+    if(!success_){
+		RCLCPP_ERROR(LOGGER, "Pick action failed!");
+		return 0;
+	}
 
 	success_ = manipulator_.cartesian_goal(pick_poses[0]);
 	if(!success_){
@@ -183,20 +196,13 @@ bool GraspingTestUtils::pick_up()
 		return 0;
 	}
 
-	success_ = manipulator_.cartesian_goal(pick_poses[1]);
+	success_ = manipulator_.cartesian_goal(pick_poses[1], 15);
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
 	}
 
-	if(debug_){
-		manipulator_.world_marker->prompt("press 'Next' to attach collision object");
-	}
 	manipulator_.attach_collision_object(coll_obj);
-
-	if(debug_){
-		manipulator_.world_marker->prompt("press 'Next' to grasp object");
-	}
 	success_ = manipulator_.activate_vacuum_gripper(true);
 	if (!success_) {
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
@@ -205,14 +211,23 @@ bool GraspingTestUtils::pick_up()
 		RCLCPP_INFO(LOGGER, "Suction enabled!");
 	}
 
-	success_ = manipulator_.cartesian_goal(pick_poses[0]);
+	success_ = manipulator_.cartesian_goal(pick_poses[0], 15);
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
 	}
 
 	if(debug_){
-		manipulator_.world_marker->prompt("press 'Next' to move back to position after grasping");
+		manipulator_.world_marker->prompt("press 'Next' to move back above box");
+	}
+	success_ = manipulator_.predefined_pose("above_box_1");
+	if(!success_){
+		RCLCPP_ERROR(LOGGER, "Pick action failed!");
+		return 0;
+	}
+
+	if(debug_){
+		manipulator_.world_marker->prompt("press 'Next' to move back to starting position");
 	}
 	success_ = manipulator_.predefined_pose("wait_slam");
 	if(!success_){
@@ -228,7 +243,7 @@ bool GraspingTestUtils::put_down()
 	if(debug_){
 		manipulator_.world_marker->prompt("press 'Next' to drop off grasped bottle");
 	}
-	success_ = manipulator_.predefined_pose("bottle_dropoff");
+	success_ = manipulator_.predefined_pose("inter_floor_4");
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Putting back failed!");
 		return 0;
