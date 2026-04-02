@@ -56,6 +56,26 @@ ament_target_dependencies(
   yaml-cpp
 )
 
+add_executable(constant_pose src/constant_pose.cpp
+				   src/constant_pose_utils.cpp)
+
+target_include_directories(constant_pose PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+
+target_compile_features(constant_pose PUBLIC c_std_99 cxx_std_17)
+
+ament_target_dependencies(
+  constant_pose
+  rclcpp
+  moveit_ros_planning_interface
+  control_msgs
+  moveit_visual_tools
+  manipulator_interface
+  edi_robot_msgs
+  yaml-cpp
+)
+
 install(
   DIRECTORY include/
   DESTINATION include/${PROJECT_NAME}
@@ -65,6 +85,7 @@ install(
   TARGETS 
     edi_bottle_picking
     grasping_test
+    constant_pose
   DESTINATION lib/${PROJECT_NAME})
 
 install(

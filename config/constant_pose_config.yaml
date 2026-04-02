@@ -1,0 +1,4 @@
+debug: true
+iterations: 5
+pose_from_topic: false
+pose_topic_name: "const_pose"
