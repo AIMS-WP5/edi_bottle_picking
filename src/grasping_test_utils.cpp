@@ -128,7 +128,7 @@ geometry_msgs::msg::Pose GraspingTestUtils::check_pose_angle(geometry_msgs::msg:
 bool GraspingTestUtils::pick_up()
 {
     if(debug_){
-        manipulator_.world_marker->prompt("press 'Next' to go to position above pickup place");
+        manipulator_.world_marker_->prompt("press 'Next' to go to position above pickup place");
     }
     success_ = manipulator_.predefined_pose("wait_slam");
     if(!success_){
@@ -137,7 +137,7 @@ bool GraspingTestUtils::pick_up()
 	}
 
 	if(debug_){
-		manipulator_.world_marker->prompt("press 'Next' to open the gripper");
+		manipulator_.world_marker_->prompt("press 'Next' to open the gripper");
 	}
 	success_ = manipulator_.activate_vacuum_gripper(false);
 	if (!success_) {
@@ -148,7 +148,7 @@ bool GraspingTestUtils::pick_up()
 	}
 
 	if(debug_){
-		manipulator_.world_marker->prompt("press 'Next' to get object grasp pose");
+		manipulator_.world_marker_->prompt("press 'Next' to get object grasp pose");
 	}
 	// geometry_msgs::msg::Pose grasp_pose = GraspingTestUtils::get_next_published_pose("/grasp_pose", false, 10);
 	geometry_msgs::msg::Pose grasp_pose = GraspingTestUtils::get_curr_grasp_pose();
@@ -162,15 +162,15 @@ bool GraspingTestUtils::pick_up()
 	// geometry_msgs::msg::Pose pick_pose = manipulator_.transform_pose("world", "realsense_455_on_stand", grasp_pose);
 	geometry_msgs::msg::PoseStamped pick_pose_stamped = manipulator_.transform_pose("world", grasp_pose_stamped);
 	geometry_msgs::msg::Pose pick_pose = pick_pose_stamped.pose;
-	manipulator_.world_marker->publishAxisLabeled(pick_pose, "Object_pose");
-	manipulator_.world_marker->trigger();
+	manipulator_.world_marker_->publishAxisLabeled(pick_pose, "Object_pose");
+	manipulator_.world_marker_->trigger();
 	if(debug_){
-		manipulator_.world_marker->prompt("press 'Next' to check pose angle");
+		manipulator_.world_marker_->prompt("press 'Next' to check pose angle");
 	}
 	pick_pose = check_pose_angle(pick_pose, 0);
-	// manipulator_.world_marker->deleteAllMarkers();
-	manipulator_.world_marker->publishAxisLabeled(pick_pose, "Corrected_object_pose");
-	manipulator_.world_marker->trigger();
+	// manipulator_.world_marker_->deleteAllMarkers();
+	manipulator_.world_marker_->publishAxisLabeled(pick_pose, "Corrected_object_pose");
+	manipulator_.world_marker_->trigger();
 
 	moveit_msgs::msg::CollisionObject coll_obj;
 	success_ = manipulator_.add_collision_object_simple(pick_pose, "world", coll_obj);
@@ -182,7 +182,7 @@ bool GraspingTestUtils::pick_up()
 	std::vector<geometry_msgs::msg::Pose> pick_poses = manipulator_.create_pick_moves_simple(pick_pose);
 
 	if(debug_){
-		manipulator_.world_marker->prompt("press 'Next' to go above box");
+		manipulator_.world_marker_->prompt("press 'Next' to go above box");
 	}
 	success_ = manipulator_.predefined_pose("above_box_1");
     if(!success_){
@@ -218,7 +218,7 @@ bool GraspingTestUtils::pick_up()
 	}
 
 	if(debug_){
-		manipulator_.world_marker->prompt("press 'Next' to move back above box");
+		manipulator_.world_marker_->prompt("press 'Next' to move back above box");
 	}
 	success_ = manipulator_.predefined_pose("above_box_1");
 	if(!success_){
@@ -227,7 +227,7 @@ bool GraspingTestUtils::pick_up()
 	}
 
 	if(debug_){
-		manipulator_.world_marker->prompt("press 'Next' to move back to starting position");
+		manipulator_.world_marker_->prompt("press 'Next' to move back to starting position");
 	}
 	success_ = manipulator_.predefined_pose("wait_slam");
 	if(!success_){
@@ -241,7 +241,7 @@ bool GraspingTestUtils::pick_up()
 bool GraspingTestUtils::put_down()
 {
 	if(debug_){
-		manipulator_.world_marker->prompt("press 'Next' to drop off grasped bottle");
+		manipulator_.world_marker_->prompt("press 'Next' to drop off grasped bottle");
 	}
 	success_ = manipulator_.predefined_pose("inter_floor_4");
 	if(!success_){
@@ -266,6 +266,47 @@ geometry_msgs::msg::Pose GraspingTestUtils::get_curr_grasp_pose()
 void GraspingTestUtils::grasp_pose_callback(const geometry_msgs::msg::PoseStamped::SharedPtr msg)
 {
 	curr_grasp_pose_ = msg->pose;
+}
+
+bool GraspingTestUtils::get_grasped_status(int timeout_sec)
+{
+	auto node = rclcpp::Node::make_shared("tmp_grasp_status_node");
+	ur_msgs::msg::IOStates received_msg;
+	bool received = false;
+    auto callback = [&received_msg, &received](ur_msgs::msg::IOStates msg) {
+        received_msg = msg;
+		received = true;
+    };
+    auto sub = node->create_subscription<ur_msgs::msg::IOStates>("/io_and_status_controller/io_states", 10, callback);
+
+    auto start = std::chrono::steady_clock::now();
+    rclcpp::executors::SingleThreadedExecutor exec;
+    exec.add_node(node);
+
+	std::chrono::milliseconds timeout = timeout_sec * 1000ms;
+    while (rclcpp::ok() && !received) {
+        exec.spin_some();
+        if (std::chrono::steady_clock::now() - start > timeout) {
+            break;
+        }
+        std::this_thread::sleep_for(50ms);
+    }
+
+	if (!received) {
+		RCLCPP_ERROR(LOGGER, "IO states msg not received!");
+		return false;
+	}
+
+	std::vector<ur_msgs::msg::Digital> digital_in_states = received_msg.digital_in_states;
+	bool pin17_state = false;
+	for (ur_msgs::msg::Digital digital : digital_in_states) {
+		if (digital.pin == 17) {
+			pin17_state = digital.state;
+			RCLCPP_INFO(LOGGER, "Got pin 17 state (gripper H2 value): %d", pin17_state);
+			break;
+		}
+	}
+	return pin17_state;
 }
 
 } // namespace grasping_test_utils

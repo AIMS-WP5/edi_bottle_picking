@@ -52,7 +52,7 @@ geometry_msgs::msg::Pose EdiBottlePickingUtils::get_grasp_pose_topic()
 bool EdiBottlePickingUtils::pick_bottle()
 {
     if(debug_){
-        manipulator_.world_marker->prompt("press 'Next' to go to position above pickup place");
+        manipulator_.world_marker_->prompt("press 'Next' to go to position above pickup place");
     }
     success_ = manipulator_.predefined_pose("wait_slam");
     if(!success_){
@@ -61,7 +61,7 @@ bool EdiBottlePickingUtils::pick_bottle()
 	}
 
 	if(debug_){
-		manipulator_.world_marker->prompt("press 'Next' to open the gripper");
+		manipulator_.world_marker_->prompt("press 'Next' to open the gripper");
 	}	
     // if(manipulator_.activate_gripper(false) != moveit::core::MoveItErrorCode::SUCCESS){
     //   RCLCPP_ERROR(LOGGER, "Pick action failed!");
@@ -78,7 +78,7 @@ bool EdiBottlePickingUtils::pick_bottle()
 	}
 
 	if(debug_){
-		manipulator_.world_marker->prompt("press 'Next' to get object grasp pose");
+		manipulator_.world_marker_->prompt("press 'Next' to get object grasp pose");
 	}
 	geometry_msgs::msg::Pose grasp_pose = EdiBottlePickingUtils::get_grasp_pose_topic();
 	if (grasp_pose.position.z == 0.0) {
@@ -88,7 +88,7 @@ bool EdiBottlePickingUtils::pick_bottle()
 	geometry_msgs::msg::Pose pick_pose = manipulator_.transform_pose("world", "realsense_435_on_robot", grasp_pose);
 
 	if(debug_){
-		manipulator_.world_marker->prompt("press 'Next' to add collision object");
+		manipulator_.world_marker_->prompt("press 'Next' to add collision object");
 	}
 	moveit_msgs::msg::CollisionObject coll_obj;
 	success_ = manipulator_.add_collision_object(pick_pose, "world", coll_obj);
@@ -98,7 +98,7 @@ bool EdiBottlePickingUtils::pick_bottle()
 	}
 	
 	if(debug_){
-		manipulator_.world_marker->prompt("press 'Next' to create pick moves for the object");
+		manipulator_.world_marker_->prompt("press 'Next' to create pick moves for the object");
 	}
 	std::vector<geometry_msgs::msg::Pose> pick_poses = manipulator_.create_pick_moves(pick_pose);
 
@@ -117,12 +117,12 @@ bool EdiBottlePickingUtils::pick_bottle()
 	}
 
 	if(debug_){
-		manipulator_.world_marker->prompt("press 'Next' to attach collision object");
+		manipulator_.world_marker_->prompt("press 'Next' to attach collision object");
 	}
 	manipulator_.attach_collision_object(coll_obj);
 
 	if(debug_){
-		manipulator_.world_marker->prompt("press 'Next' to close the gripper");
+		manipulator_.world_marker_->prompt("press 'Next' to close the gripper");
 	}
 
 	// if(manipulator_.activate_gripper(true) != moveit::core::MoveItErrorCode::SUCCESS){
@@ -146,7 +146,7 @@ bool EdiBottlePickingUtils::pick_bottle()
 	}
 
 	if(debug_){
-		manipulator_.world_marker->prompt("press 'Next' to move std position after grasping");
+		manipulator_.world_marker_->prompt("press 'Next' to move std position after grasping");
 	}
 	success_ = manipulator_.predefined_pose("after_pickup");
 	if(!success_){
@@ -160,7 +160,7 @@ bool EdiBottlePickingUtils::pick_bottle()
 bool EdiBottlePickingUtils::put_back_on_table()
 {
     if(debug_){
-        manipulator_.world_marker->prompt("press 'Next' to place bottle back on the table");
+        manipulator_.world_marker_->prompt("press 'Next' to place bottle back on the table");
     }
 	success_ = manipulator_.predefined_pose("inter_floor_4");
 	if(!success_){

@@ -3,6 +3,8 @@
 
 #include <rclcpp/rclcpp.hpp>
 #include <manipulator_interface/manipulator_interface.h>
+#include <ur_msgs/msg/io_states.hpp>
+#include <ur_msgs/msg/digital.hpp>
 
 
 namespace grasping_test_utils
@@ -32,6 +34,8 @@ namespace grasping_test_utils
     void grasp_pose_callback(const geometry_msgs::msg::PoseStamped::SharedPtr msg);
 
     bool add_box();
+
+    bool get_grasped_status(int timeout_sec = 5);
 
 	private:
         manipulator_interface::ManipulatorInterface& manipulator_;
