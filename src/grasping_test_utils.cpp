@@ -211,6 +211,16 @@ bool GraspingTestUtils::pick_up()
 		RCLCPP_INFO(LOGGER, "Suction enabled!");
 	}
 
+	std::this_thread::sleep_for(100ms);
+	success_ = get_grasped_status();
+	if (!success_) {
+		RCLCPP_ERROR(LOGGER, "Bottle not grasped!");
+		manipulator_.activate_vacuum_gripper(false);
+		manipulator_.world_marker_->prompt("press 'Next' to move back above box");
+		success_ = manipulator_.predefined_pose("above_box_1");
+		return 0;
+	}
+
 	success_ = manipulator_.cartesian_goal(pick_poses[0], 15);
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
