@@ -98,7 +98,7 @@ bool ConstantPoseUtils::pickup()
     if(debug_){
         manipulator_.world_marker_->prompt("press 'Next' to go to position above pickup place");
     }
-    success_ = manipulator_.predefined_pose("wait_slam");
+    success_ = manipulator_.test_move_manipulator_predefined("wait_slam");
     if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
@@ -130,13 +130,13 @@ bool ConstantPoseUtils::pickup()
 
 	std::vector<geometry_msgs::msg::Pose> pick_poses = manipulator_.create_pick_moves_simple(pick_pose);
 
-	success_ = manipulator_.cartesian_goal(pick_poses[0]);
+	success_ = manipulator_.test_move_manipulator_global(pick_poses[0]);
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
 	}
 
-	success_ = manipulator_.cartesian_goal(pick_poses[1], 15);
+	success_ = manipulator_.test_move_manipulator_cartesian(pick_poses[1]);
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
@@ -152,7 +152,7 @@ bool ConstantPoseUtils::pickup()
 		RCLCPP_INFO(LOGGER, "Suction enabled!");
 	}
 
-	success_ = manipulator_.cartesian_goal(pick_poses[0], 15);
+	success_ = manipulator_.test_move_manipulator_cartesian(pick_poses[0]);
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
@@ -161,7 +161,7 @@ bool ConstantPoseUtils::pickup()
 	if(debug_){
 		manipulator_.world_marker_->prompt("press 'Next' to move above socket");
 	}
-	success_ = manipulator_.predefined_pose("ai_start2");
+	success_ = manipulator_.test_move_manipulator_predefined("ai_start2");
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
@@ -170,7 +170,7 @@ bool ConstantPoseUtils::pickup()
 	if(debug_){
         manipulator_.world_marker_->prompt("press 'Next' to go to position above pickup place");
     }
-    success_ = manipulator_.predefined_pose("wait_slam");
+    success_ = manipulator_.test_move_manipulator_predefined("wait_slam");
     if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
@@ -179,13 +179,13 @@ bool ConstantPoseUtils::pickup()
         manipulator_.world_marker_->prompt("press 'Next' to drop off bottle");
     }
 
-	success_ = manipulator_.cartesian_goal(pick_poses[0]);
+	success_ = manipulator_.test_move_manipulator_global(pick_poses[0]);
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
 	}
 
-	success_ = manipulator_.cartesian_goal(pick_poses[1], 15);
+	success_ = manipulator_.test_move_manipulator_cartesian(pick_poses[1]);
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
@@ -201,7 +201,7 @@ bool ConstantPoseUtils::pickup()
 	geometry_msgs::msg::Pose retreat_pose = pick_poses[1];
 	retreat_pose.position.z = retreat_pose.position.z + 0.01;
 
-	success_ = manipulator_.cartesian_goal(retreat_pose, 10);
+	success_ = manipulator_.test_move_manipulator_cartesian(retreat_pose);
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;

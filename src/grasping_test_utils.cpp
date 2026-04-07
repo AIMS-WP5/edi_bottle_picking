@@ -130,7 +130,7 @@ bool GraspingTestUtils::pick_up()
     if(debug_){
         manipulator_.world_marker_->prompt("press 'Next' to go to position above pickup place");
     }
-    success_ = manipulator_.predefined_pose("wait_slam");
+    success_ = manipulator_.test_move_manipulator_predefined("wait_slam");
     if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
@@ -184,19 +184,19 @@ bool GraspingTestUtils::pick_up()
 	if(debug_){
 		manipulator_.world_marker_->prompt("press 'Next' to go above box");
 	}
-	success_ = manipulator_.predefined_pose("above_box_1");
+	success_ = manipulator_.test_move_manipulator_predefined("above_box_1");
     if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
 	}
 
-	success_ = manipulator_.cartesian_goal(pick_poses[0]);
+	success_ = manipulator_.test_move_manipulator_global(pick_poses[0]);
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
 	}
 
-	success_ = manipulator_.cartesian_goal(pick_poses[1], 15);
+	success_ = manipulator_.test_move_manipulator_cartesian(pick_poses[1]);
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
@@ -217,11 +217,11 @@ bool GraspingTestUtils::pick_up()
 		RCLCPP_ERROR(LOGGER, "Bottle not grasped!");
 		manipulator_.activate_vacuum_gripper(false);
 		manipulator_.world_marker_->prompt("press 'Next' to move back above box");
-		success_ = manipulator_.predefined_pose("above_box_1");
+		success_ = manipulator_.test_move_manipulator_predefined("above_box_1");
 		return 0;
 	}
 
-	success_ = manipulator_.cartesian_goal(pick_poses[0], 15);
+	success_ = manipulator_.test_move_manipulator_cartesian(pick_poses[0]);
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
@@ -230,7 +230,7 @@ bool GraspingTestUtils::pick_up()
 	if(debug_){
 		manipulator_.world_marker_->prompt("press 'Next' to move back above box");
 	}
-	success_ = manipulator_.predefined_pose("above_box_1");
+	success_ = manipulator_.test_move_manipulator_predefined("above_box_1");
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
@@ -239,7 +239,7 @@ bool GraspingTestUtils::pick_up()
 	if(debug_){
 		manipulator_.world_marker_->prompt("press 'Next' to move back to starting position");
 	}
-	success_ = manipulator_.predefined_pose("wait_slam");
+	success_ = manipulator_.test_move_manipulator_predefined("wait_slam");
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
@@ -253,7 +253,7 @@ bool GraspingTestUtils::put_down()
 	if(debug_){
 		manipulator_.world_marker_->prompt("press 'Next' to drop off grasped bottle");
 	}
-	success_ = manipulator_.predefined_pose("inter_floor_4");
+	success_ = manipulator_.test_move_manipulator_predefined("inter_floor_4");
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Putting back failed!");
 		return 0;
