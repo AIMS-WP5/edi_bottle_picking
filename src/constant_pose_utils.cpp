@@ -27,6 +27,9 @@ ConstantPoseUtils::ConstantPoseUtils(manipulator_interface::ManipulatorInterface
 		curr_grasp_pose_.orientation.w = -0.00722554;
 	}
 	pub_dp_exec_start_ = manipulator.node_->create_publisher<std_msgs::msg::Empty>("dp_exec_start", 10);
+	sub_dp_exec_done_ = manipulator.node_->create_subscription<std_msgs::msg::Bool>(
+		"dp_exec_done", 10, std::bind(&ConstantPoseUtils::dp_exec_done_callback, this, _1)
+	);
 }
 
 ConstantPoseUtils::~ConstantPoseUtils()
@@ -179,10 +182,10 @@ bool ConstantPoseUtils::pickup()
 	auto start_msg = std_msgs::msg::Empty();
 	pub_dp_exec_start_->publish(start_msg);
 
-	if(debug_){
-		manipulator_.world_marker_->prompt("press 'Next' to switch controllers back");
-	}
-	success_ = switch_controllers("joint_trajectory_controller", "forward_velocity_controller");
+	// if(debug_){
+	// 	manipulator_.world_marker_->prompt("press 'Next' to switch controllers back");
+	// }
+	// success_ = switch_controllers("joint_trajectory_controller", "forward_velocity_controller");
 
 	if(debug_){
         manipulator_.world_marker_->prompt("press 'Next' to go to position above pickup place");
@@ -276,6 +279,15 @@ bool ConstantPoseUtils::switch_controllers(std::string start_ctrl_name, std::str
     }
     RCLCPP_ERROR(LOGGER, "Controller switch failed");
     return false;
+}
+
+void ConstantPoseUtils::dp_exec_done_callback(const std_msgs::msg::Bool::SharedPtr msg)
+{
+	bool success = msg->data;
+	if (success) RCLCPP_INFO(LOGGER, "Inserting bottle successful");
+	else RCLCPP_INFO(LOGGER, "Error while inserting bottle");
+
+	switch_controllers("joint_trajectory_controller", "forward_velocity_controller");
 }
 
 } // namespace constant_pose_utils
