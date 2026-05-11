@@ -214,7 +214,6 @@ bool GraspingTestUtils::pick_up()
 
 	std::this_thread::sleep_for(100ms);
 	success_ = get_grasped_status();
-	success_ = true;
 	if (!success_) {
 		RCLCPP_ERROR(LOGGER, "Bottle not grasped!");
 		manipulator_.activate_vacuum_gripper(false);
