@@ -16,6 +16,7 @@
   <depend>moveit_visual_tools</depend>
   <depend>edi_robot_msgs</depend>
   <depend>ur_msgs</depend>
+  <depend>controller_manager_msgs</depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

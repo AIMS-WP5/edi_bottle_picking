@@ -15,6 +15,7 @@ find_package(moveit_visual_tools REQUIRED)
 find_package(edi_robot_msgs REQUIRED)
 find_package(ur_msgs REQUIRED)
 find_package(yaml-cpp REQUIRED)
+find_package(controller_manager_msgs REQUIRED)
 
 add_executable(edi_bottle_picking src/edi_bottle_picking.cpp
 				   src/edi_bottle_picking_utils.cpp)
@@ -54,6 +55,7 @@ ament_target_dependencies(
   edi_robot_msgs
   ur_msgs
   yaml-cpp
+  controller_manager_msgs
 )
 
 add_executable(constant_pose src/constant_pose.cpp
