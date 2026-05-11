@@ -76,6 +76,7 @@ ament_target_dependencies(
   manipulator_interface
   edi_robot_msgs
   yaml-cpp
+  controller_manager_msgs
 )
 
 install(

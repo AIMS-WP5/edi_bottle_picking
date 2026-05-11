@@ -5,6 +5,10 @@
 #include <manipulator_interface/manipulator_interface.h>
 #include <ur_msgs/msg/io_states.hpp>
 #include <ur_msgs/msg/digital.hpp>
+#include <controller_manager_msgs/srv/switch_controller.hpp>
+#include <builtin_interfaces/msg/duration.hpp>
+#include <std_msgs/msg/empty.hpp>
+#include <chrono>
 
 
 namespace constant_pose_utils
@@ -24,11 +28,14 @@ namespace constant_pose_utils
 
     bool pickup();
 
+    bool switch_controllers(std::string start_ctrl_name, std::string stop_ctrl_name);
+
 	private:
         manipulator_interface::ManipulatorInterface& manipulator_;
         bool debug_, success_, use_pose_from_topic_;
         rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr sub_grasp_pose_;
         geometry_msgs::msg::Pose curr_grasp_pose_;
+        rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr pub_dp_exec_start_;
 	};
 
 }

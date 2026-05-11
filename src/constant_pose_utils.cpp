@@ -26,6 +26,7 @@ ConstantPoseUtils::ConstantPoseUtils(manipulator_interface::ManipulatorInterface
 		curr_grasp_pose_.orientation.z = 0.027794998;
 		curr_grasp_pose_.orientation.w = -0.00722554;
 	}
+	pub_dp_exec_start_ = manipulator.node_->create_publisher<std_msgs::msg::Empty>("dp_exec_start", 10);
 }
 
 ConstantPoseUtils::~ConstantPoseUtils()
@@ -168,6 +169,22 @@ bool ConstantPoseUtils::pickup()
 	}
 
 	if(debug_){
+		manipulator_.world_marker_->prompt("press 'Next' to switch controllers");
+	}
+	success_ = switch_controllers("forward_velocity_controller", "joint_trajectory_controller");
+
+	if(debug_){
+		manipulator_.world_marker_->prompt("press 'Next' to start DP control");
+	}
+	auto start_msg = std_msgs::msg::Empty();
+	pub_dp_exec_start_->publish(start_msg);
+
+	if(debug_){
+		manipulator_.world_marker_->prompt("press 'Next' to switch controllers back");
+	}
+	success_ = switch_controllers("joint_trajectory_controller", "forward_velocity_controller");
+
+	if(debug_){
         manipulator_.world_marker_->prompt("press 'Next' to go to position above pickup place");
     }
     success_ = manipulator_.predefined_pose("wait_slam");
@@ -217,6 +234,48 @@ bool ConstantPoseUtils::pickup()
 	manipulator_.detach_collision_object();
 
 	return true;
+}
+
+bool ConstantPoseUtils::switch_controllers(std::string start_ctrl_name, std::string stop_ctrl_name)
+{
+    auto node = std::make_shared<rclcpp::Node>("tmp_controller_switch_node");
+    auto client = node->create_client<controller_manager_msgs::srv::SwitchController>("/controller_manager/switch_controller");
+
+    // Wait for service
+    while (!client->wait_for_service(std::chrono::seconds(2))) {
+        RCLCPP_WARN(LOGGER, "Waiting for /controller_manager/switch_controller service...");
+    }
+
+    auto request = std::make_shared<controller_manager_msgs::srv::SwitchController::Request>();
+
+	std::vector<std::string> start_controllers = {start_ctrl_name};
+    std::vector<std::string> stop_controllers = {stop_ctrl_name};
+    request->activate_controllers = start_controllers;
+    request->deactivate_controllers = stop_controllers;
+    request->strictness = controller_manager_msgs::srv::SwitchController::Request::STRICT;
+    request->activate_asap = true;
+
+    builtin_interfaces::msg::Duration timeout;
+    timeout.sec = 5;
+    timeout.nanosec = 0;
+    request->timeout = timeout;
+
+    auto future = client->async_send_request(request);
+    auto result = rclcpp::spin_until_future_complete(node, future);
+
+    if (result != rclcpp::FutureReturnCode::SUCCESS) {
+        RCLCPP_ERROR(LOGGER, "Failed to call /controller_manager/switch_controller");
+        return false;
+    }
+
+    // Get service response
+    auto response = future.get();
+    if (response->ok) {
+        RCLCPP_INFO(LOGGER, "Controller switch successful");
+        return true;
+    }
+    RCLCPP_ERROR(LOGGER, "Controller switch failed");
+    return false;
 }
 
 } // namespace constant_pose_utils
