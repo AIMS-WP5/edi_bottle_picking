@@ -79,6 +79,28 @@ ament_target_dependencies(
   controller_manager_msgs
 )
 
+add_executable(conveyor_feeding src/conveyor_feeding.cpp
+				   src/conveyor_feeding_utils.cpp)
+
+target_include_directories(conveyor_feeding PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+
+target_compile_features(conveyor_feeding PUBLIC c_std_99 cxx_std_17)
+
+ament_target_dependencies(
+  conveyor_feeding
+  rclcpp
+  moveit_ros_planning_interface
+  control_msgs
+  moveit_visual_tools
+  manipulator_interface
+  edi_robot_msgs
+  ur_msgs
+  yaml-cpp
+  controller_manager_msgs
+)
+
 install(
   DIRECTORY include/
   DESTINATION include/${PROJECT_NAME}
@@ -89,6 +111,7 @@ install(
     edi_bottle_picking
     grasping_test
     constant_pose
+    conveyor_feeding
   DESTINATION lib/${PROJECT_NAME})
 
 install(

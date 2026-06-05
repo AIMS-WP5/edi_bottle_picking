@@ -1,0 +1,4 @@
+debug: true
+iterations: 50
+grasp_pose_topic: "best_grasp"
+default_controller: "joint_trajectory_controller" # scaled_joint_trajectory_controller for real robot
