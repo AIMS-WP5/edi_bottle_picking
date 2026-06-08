@@ -9,7 +9,7 @@ namespace constant_pose_utils
 const rclcpp::Logger LOGGER = rclcpp::get_logger("constant_pose_utils");
 
 ConstantPoseUtils::ConstantPoseUtils(manipulator_interface::ManipulatorInterface& manipulator, bool pose_from_topic, std::string pose_topic_name, bool debug, bool is_isaac)
-    : manipulator_(manipulator), debug_(debug), use_pose_from_topic_(pose_from_topic)
+    : manipulator_(manipulator), debug_(debug), use_pose_from_topic_(pose_from_topic), simulation_(is_isaac)
 {
 	if (use_pose_from_topic_) {
 		sub_grasp_pose_ = manipulator.node_->create_subscription<geometry_msgs::msg::PoseStamped>(
@@ -28,11 +28,46 @@ ConstantPoseUtils::ConstantPoseUtils(manipulator_interface::ManipulatorInterface
 	}
 	control_switcher_ = std::make_unique<edi_bottle_picking::ControlModeSwitcher>(
 		manipulator.node_, is_isaac, "joint_trajectory_controller");
+	isaac_vacuum_client_ = manipulator.node_->create_client<std_srvs::srv::SetBool>("/vacuum_gripper/command");
 }
 
 ConstantPoseUtils::~ConstantPoseUtils()
 {
     // Destructor implementation
+}
+
+bool ConstantPoseUtils::command_vacuum(bool grip)
+{
+	bool ok;
+	if (simulation_) {
+		// Isaac/TopicBasedSystem has no UR /set_io service, so activate_vacuum_gripper()
+		// would block ~5 s on it and report the grasp failed (aborting the pick). In sim the
+		// suction is modelled entirely by the Isaac bridge, so skip the UR IO path.
+		ok = true;
+	} else {
+		ok = manipulator_.activate_vacuum_gripper(grip);
+	}
+	// Mirror the command to Isaac Sim's vacuum bridge (best-effort; warns + continues if absent).
+	set_isaac_vacuum(grip);
+	return ok;
+}
+
+void ConstantPoseUtils::set_isaac_vacuum(bool grip)
+{
+	if (!isaac_vacuum_client_->service_is_ready()) {
+		RCLCPP_WARN(LOGGER, "Isaac vacuum service '/vacuum_gripper/command' not available; "
+		                    "skipping sim %s command", grip ? "GRIP" : "RELEASE");
+		return;
+	}
+	auto request = std::make_shared<std_srvs::srv::SetBool::Request>();
+	request->data = grip;
+	isaac_vacuum_client_->async_send_request(
+		request,
+		[grip](rclcpp::Client<std_srvs::srv::SetBool>::SharedFuture future) {
+			auto response = future.get();
+			RCLCPP_INFO(LOGGER, "Isaac vacuum %s -> success=%d (%s)",
+			            grip ? "GRIP" : "RELEASE", response->success, response->message.c_str());
+		});
 }
 
 void ConstantPoseUtils::grasp_pose_callback(const geometry_msgs::msg::PoseStamped::SharedPtr msg)
@@ -146,7 +181,7 @@ bool ConstantPoseUtils::pickup()
 
 	manipulator_.attach_collision_object(coll_obj);
 
-	success_ = manipulator_.activate_vacuum_gripper(true);
+	success_ = command_vacuum(true);
 	if (!success_) {
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
@@ -207,7 +242,7 @@ bool ConstantPoseUtils::pickup()
 		return 0;
 	}
 
-	success_ = manipulator_.activate_vacuum_gripper(false);
+	success_ = command_vacuum(false);
 	if (!success_) {
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
@@ -222,7 +257,7 @@ bool ConstantPoseUtils::pickup()
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
 	}
-	success_ = manipulator_.activate_vacuum_gripper(false);
+	success_ = command_vacuum(false);
 	if (!success_) {
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;

@@ -9,18 +9,53 @@ namespace conveyor_feeding_utils
 const rclcpp::Logger LOGGER = rclcpp::get_logger("conveyor_feeding_utils");
 
 ConveyorFeedingUtils::ConveyorFeedingUtils(manipulator_interface::ManipulatorInterface& manipulator, std::string grasp_pose_topic, std::string default_controller, bool debug, bool is_isaac)
-    : manipulator_(manipulator), debug_(debug), default_controller_(default_controller)
+    : manipulator_(manipulator), debug_(debug), simulation_(is_isaac), default_controller_(default_controller)
 {
 	sub_grasp_pose_ = manipulator.node_->create_subscription<geometry_msgs::msg::PoseStamped>(
 		grasp_pose_topic, 10, std::bind(&ConveyorFeedingUtils::grasp_pose_callback, this, _1)
 	);
 	control_switcher_ = std::make_unique<edi_bottle_picking::ControlModeSwitcher>(
 		manipulator.node_, is_isaac, default_controller_);
+	isaac_vacuum_client_ = manipulator.node_->create_client<std_srvs::srv::SetBool>("/vacuum_gripper/command");
 }
 
 ConveyorFeedingUtils::~ConveyorFeedingUtils()
 {
     // Destructor implementation
+}
+
+bool ConveyorFeedingUtils::command_vacuum(bool grip)
+{
+	bool ok;
+	if (simulation_) {
+		// Isaac/TopicBasedSystem has no UR /set_io service, so activate_vacuum_gripper()
+		// would block ~5 s on it and report the grasp failed (aborting the pick). In sim the
+		// suction is modelled entirely by the Isaac bridge, so skip the UR IO path.
+		ok = true;
+	} else {
+		ok = manipulator_.activate_vacuum_gripper(grip);
+	}
+	// Mirror the command to Isaac Sim's vacuum bridge (best-effort; warns + continues if absent).
+	set_isaac_vacuum(grip);
+	return ok;
+}
+
+void ConveyorFeedingUtils::set_isaac_vacuum(bool grip)
+{
+	if (!isaac_vacuum_client_->service_is_ready()) {
+		RCLCPP_WARN(LOGGER, "Isaac vacuum service '/vacuum_gripper/command' not available; "
+		                    "skipping sim %s command", grip ? "GRIP" : "RELEASE");
+		return;
+	}
+	auto request = std::make_shared<std_srvs::srv::SetBool::Request>();
+	request->data = grip;
+	isaac_vacuum_client_->async_send_request(
+		request,
+		[grip](rclcpp::Client<std_srvs::srv::SetBool>::SharedFuture future) {
+			auto response = future.get();
+			RCLCPP_INFO(LOGGER, "Isaac vacuum %s -> success=%d (%s)",
+			            grip ? "GRIP" : "RELEASE", response->success, response->message.c_str());
+		});
 }
 
 bool ConveyorFeedingUtils::add_box() {
@@ -138,7 +173,7 @@ bool ConveyorFeedingUtils::run()
 		return 0;
 	}
 
-	success_ = manipulator_.activate_vacuum_gripper(false);
+	success_ = command_vacuum(false);
 	if (!success_) {
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
@@ -197,7 +232,7 @@ bool ConveyorFeedingUtils::run()
 	}
 
 	manipulator_.attach_collision_object(coll_obj);
-	success_ = manipulator_.activate_vacuum_gripper(true);
+	success_ = command_vacuum(true);
 	if (!success_) {
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
@@ -209,7 +244,7 @@ bool ConveyorFeedingUtils::run()
 	success_ = get_grasped_status();
 	if (!success_) {
 		RCLCPP_ERROR(LOGGER, "Bottle not grasped!");
-		manipulator_.activate_vacuum_gripper(false);
+		command_vacuum(false);
 		manipulator_.world_marker_->prompt("press 'Next' to move back above box");
 		success_ = manipulator_.predefined_pose("above_box_1");
 		return 0;
@@ -262,6 +297,21 @@ bool ConveyorFeedingUtils::run()
 		RCLCPP_WARN(LOGGER, "DP segment reported failure (collision/limits exceeded)");
 	}
 
+	// Release the inserted bottle here, at the insertion point, BEFORE the robot lifts up and
+	// moves away. Previously conveyor_feeding never released after the DP segment, so the
+	// bottle was only dropped at the start of the next iteration (after returning to the
+	// ready poses) -- it stayed attached through ai_start2/ai_after_pickup.
+	if(debug_){
+		manipulator_.world_marker_->prompt("press 'Next' to release the inserted bottle");
+	}
+	success_ = command_vacuum(false);
+	if (!success_) {
+		RCLCPP_ERROR(LOGGER, "Pick action failed!");
+		return 0;
+	} else {
+		RCLCPP_INFO(LOGGER, "Suction disabled (bottle released)!");
+	}
+
 	if(debug_){
 		manipulator_.world_marker_->prompt("press 'Next' to move back");
 	}
@@ -294,6 +344,12 @@ void ConveyorFeedingUtils::grasp_pose_callback(const geometry_msgs::msg::PoseSta
 
 bool ConveyorFeedingUtils::get_grasped_status(int timeout_sec)
 {
+	if (simulation_) {
+		// No UR digital IO in Isaac Sim; the (hacky) vacuum bridge always "grasps".
+		RCLCPP_INFO(LOGGER, "Simulation mode: assuming successful grasp (skipping UR IO pin-17 check)");
+		return true;
+	}
+
 	auto node = rclcpp::Node::make_shared("tmp_grasp_status_node");
 	ur_msgs::msg::IOStates received_msg;
 	bool received = false;
