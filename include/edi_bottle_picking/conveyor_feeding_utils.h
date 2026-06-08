@@ -3,12 +3,11 @@
 
 #include <rclcpp/rclcpp.hpp>
 #include <manipulator_interface/manipulator_interface.h>
+#include <edi_bottle_picking/control_mode_switcher.h>
 #include <ur_msgs/msg/io_states.hpp>
 #include <ur_msgs/msg/digital.hpp>
-#include <controller_manager_msgs/srv/switch_controller.hpp>
-#include <builtin_interfaces/msg/duration.hpp>
-#include <std_msgs/msg/empty.hpp>
 #include <chrono>
+#include <memory>
 
 
 namespace conveyor_feeding_utils
@@ -16,7 +15,7 @@ namespace conveyor_feeding_utils
 	class ConveyorFeedingUtils
     {
     public:
-    ConveyorFeedingUtils(manipulator_interface::ManipulatorInterface& manipulator, std::string grasp_pose_topic, std::string default_controller, bool debug = false); // Constructor
+    ConveyorFeedingUtils(manipulator_interface::ManipulatorInterface& manipulator, std::string grasp_pose_topic, std::string default_controller, bool debug = false, bool is_isaac = false); // Constructor
 
     ~ConveyorFeedingUtils(); // Destructor
 
@@ -39,15 +38,13 @@ namespace conveyor_feeding_utils
 
     bool get_grasped_status(int timeout_sec = 5);
 
-    bool switch_controllers(std::string start_ctrl_name, std::string stop_ctrl_name);
-
 	private:
         manipulator_interface::ManipulatorInterface& manipulator_;
         bool debug_, success_;
         rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr sub_grasp_pose_;
-        rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr pub_dp_exec_start_;
         geometry_msgs::msg::Pose curr_grasp_pose_;
         std::string default_controller_;
+        std::unique_ptr<edi_bottle_picking::ControlModeSwitcher> control_switcher_;
 	};
 
 }

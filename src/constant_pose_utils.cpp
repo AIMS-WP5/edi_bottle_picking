@@ -8,7 +8,7 @@ namespace constant_pose_utils
 
 const rclcpp::Logger LOGGER = rclcpp::get_logger("constant_pose_utils");
 
-ConstantPoseUtils::ConstantPoseUtils(manipulator_interface::ManipulatorInterface& manipulator, bool pose_from_topic, std::string pose_topic_name, bool debug)
+ConstantPoseUtils::ConstantPoseUtils(manipulator_interface::ManipulatorInterface& manipulator, bool pose_from_topic, std::string pose_topic_name, bool debug, bool is_isaac)
     : manipulator_(manipulator), debug_(debug), use_pose_from_topic_(pose_from_topic)
 {
 	if (use_pose_from_topic_) {
@@ -26,10 +26,8 @@ ConstantPoseUtils::ConstantPoseUtils(manipulator_interface::ManipulatorInterface
 		curr_grasp_pose_.orientation.z = 0.027794998;
 		curr_grasp_pose_.orientation.w = -0.00722554;
 	}
-	pub_dp_exec_start_ = manipulator.node_->create_publisher<std_msgs::msg::Empty>("dp_exec_start", 10);
-	sub_dp_exec_done_ = manipulator.node_->create_subscription<std_msgs::msg::Bool>(
-		"dp_exec_done", 10, std::bind(&ConstantPoseUtils::dp_exec_done_callback, this, _1)
-	);
+	control_switcher_ = std::make_unique<edi_bottle_picking::ControlModeSwitcher>(
+		manipulator.node_, is_isaac, "joint_trajectory_controller");
 }
 
 ConstantPoseUtils::~ConstantPoseUtils()
@@ -172,20 +170,18 @@ bool ConstantPoseUtils::pickup()
 	}
 
 	if(debug_){
-		manipulator_.world_marker_->prompt("press 'Next' to switch controllers");
+		manipulator_.world_marker_->prompt("press 'Next' to run the DP velocity segment");
 	}
-	success_ = switch_controllers("forward_velocity_controller", "joint_trajectory_controller");
-
-	if(debug_){
-		manipulator_.world_marker_->prompt("press 'Next' to start DP control");
+	// Switch to velocity control, run the DP model, and switch back once it signals
+	// /dp_exec_done (blocks until done or timeout).
+	auto dp_result = control_switcher_->run_dp_segment();
+	if (!dp_result.has_value()) {
+		RCLCPP_WARN(LOGGER, "DP segment timed out; restored position control");
+	} else if (*dp_result) {
+		RCLCPP_INFO(LOGGER, "Inserting bottle successful");
+	} else {
+		RCLCPP_INFO(LOGGER, "Error while inserting bottle");
 	}
-	auto start_msg = std_msgs::msg::Empty();
-	pub_dp_exec_start_->publish(start_msg);
-
-	// if(debug_){
-	// 	manipulator_.world_marker_->prompt("press 'Next' to switch controllers back");
-	// }
-	// success_ = switch_controllers("joint_trajectory_controller", "forward_velocity_controller");
 
 	if(debug_){
         manipulator_.world_marker_->prompt("press 'Next' to go to position above pickup place");
@@ -237,57 +233,6 @@ bool ConstantPoseUtils::pickup()
 	manipulator_.detach_collision_object();
 
 	return true;
-}
-
-bool ConstantPoseUtils::switch_controllers(std::string start_ctrl_name, std::string stop_ctrl_name)
-{
-    auto node = std::make_shared<rclcpp::Node>("tmp_controller_switch_node");
-    auto client = node->create_client<controller_manager_msgs::srv::SwitchController>("/controller_manager/switch_controller");
-
-    // Wait for service
-    while (!client->wait_for_service(std::chrono::seconds(2))) {
-        RCLCPP_WARN(LOGGER, "Waiting for /controller_manager/switch_controller service...");
-    }
-
-    auto request = std::make_shared<controller_manager_msgs::srv::SwitchController::Request>();
-
-	std::vector<std::string> start_controllers = {start_ctrl_name};
-    std::vector<std::string> stop_controllers = {stop_ctrl_name};
-    request->activate_controllers = start_controllers;
-    request->deactivate_controllers = stop_controllers;
-    request->strictness = controller_manager_msgs::srv::SwitchController::Request::STRICT;
-    request->activate_asap = true;
-
-    builtin_interfaces::msg::Duration timeout;
-    timeout.sec = 5;
-    timeout.nanosec = 0;
-    request->timeout = timeout;
-
-    auto future = client->async_send_request(request);
-    auto result = rclcpp::spin_until_future_complete(node, future);
-
-    if (result != rclcpp::FutureReturnCode::SUCCESS) {
-        RCLCPP_ERROR(LOGGER, "Failed to call /controller_manager/switch_controller");
-        return false;
-    }
-
-    // Get service response
-    auto response = future.get();
-    if (response->ok) {
-        RCLCPP_INFO(LOGGER, "Controller switch successful");
-        return true;
-    }
-    RCLCPP_ERROR(LOGGER, "Controller switch failed");
-    return false;
-}
-
-void ConstantPoseUtils::dp_exec_done_callback(const std_msgs::msg::Bool::SharedPtr msg)
-{
-	bool success = msg->data;
-	if (success) RCLCPP_INFO(LOGGER, "Inserting bottle successful");
-	else RCLCPP_INFO(LOGGER, "Error while inserting bottle");
-
-	switch_controllers("joint_trajectory_controller", "forward_velocity_controller");
 }
 
 } // namespace constant_pose_utils

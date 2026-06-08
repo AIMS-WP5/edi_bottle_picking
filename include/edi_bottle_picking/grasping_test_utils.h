@@ -3,13 +3,12 @@
 
 #include <rclcpp/rclcpp.hpp>
 #include <manipulator_interface/manipulator_interface.h>
+#include <edi_bottle_picking/control_mode_switcher.h>
 #include <ur_msgs/msg/io_states.hpp>
 #include <ur_msgs/msg/digital.hpp>
-#include <controller_manager_msgs/srv/switch_controller.hpp>
-#include <builtin_interfaces/msg/duration.hpp>
-#include <std_msgs/msg/empty.hpp>
 #include <std_srvs/srv/set_bool.hpp>
 #include <chrono>
+#include <memory>
 
 
 namespace grasping_test_utils
@@ -42,8 +41,6 @@ namespace grasping_test_utils
 
     bool get_grasped_status(int timeout_sec = 5);
 
-    bool switch_controllers(std::string start_ctrl_name, std::string stop_ctrl_name);
-
 	private:
         /** \brief Command the vacuum gripper: drives the real UR gripper AND mirrors the
             command to Isaac Sim's vacuum bridge. Returns the real-gripper result. */
@@ -56,8 +53,8 @@ namespace grasping_test_utils
         bool simulation_;
         bool run_dp_switchover_;
         rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr sub_grasp_pose_;
-        rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr pub_dp_exec_start_;
         rclcpp::Client<std_srvs::srv::SetBool>::SharedPtr isaac_vacuum_client_;
+        std::unique_ptr<edi_bottle_picking::ControlModeSwitcher> control_switcher_;
         geometry_msgs::msg::Pose curr_grasp_pose_;
 	};
 

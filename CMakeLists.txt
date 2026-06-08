@@ -38,7 +38,8 @@ ament_target_dependencies(
 )
 
 add_executable(grasping_test src/grasping_test.cpp
-				   src/grasping_test_utils.cpp)
+				   src/grasping_test_utils.cpp
+				   src/control_mode_switcher.cpp)
 
 target_include_directories(grasping_test PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -61,7 +62,8 @@ ament_target_dependencies(
 )
 
 add_executable(constant_pose src/constant_pose.cpp
-				   src/constant_pose_utils.cpp)
+				   src/constant_pose_utils.cpp
+				   src/control_mode_switcher.cpp)
 
 target_include_directories(constant_pose PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -79,10 +81,12 @@ ament_target_dependencies(
   edi_robot_msgs
   yaml-cpp
   controller_manager_msgs
+  std_srvs
 )
 
 add_executable(conveyor_feeding src/conveyor_feeding.cpp
-				   src/conveyor_feeding_utils.cpp)
+				   src/conveyor_feeding_utils.cpp
+				   src/control_mode_switcher.cpp)
 
 target_include_directories(conveyor_feeding PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -101,6 +105,7 @@ ament_target_dependencies(
   ur_msgs
   yaml-cpp
   controller_manager_msgs
+  std_srvs
 )
 
 install(

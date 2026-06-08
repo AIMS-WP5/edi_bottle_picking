@@ -8,13 +8,14 @@ namespace conveyor_feeding_utils
 
 const rclcpp::Logger LOGGER = rclcpp::get_logger("conveyor_feeding_utils");
 
-ConveyorFeedingUtils::ConveyorFeedingUtils(manipulator_interface::ManipulatorInterface& manipulator, std::string grasp_pose_topic, std::string default_controller, bool debug)
+ConveyorFeedingUtils::ConveyorFeedingUtils(manipulator_interface::ManipulatorInterface& manipulator, std::string grasp_pose_topic, std::string default_controller, bool debug, bool is_isaac)
     : manipulator_(manipulator), debug_(debug), default_controller_(default_controller)
 {
 	sub_grasp_pose_ = manipulator.node_->create_subscription<geometry_msgs::msg::PoseStamped>(
 		grasp_pose_topic, 10, std::bind(&ConveyorFeedingUtils::grasp_pose_callback, this, _1)
 	);
-	pub_dp_exec_start_ = manipulator.node_->create_publisher<std_msgs::msg::Empty>("dp_exec_start", 10);
+	control_switcher_ = std::make_unique<edi_bottle_picking::ControlModeSwitcher>(
+		manipulator.node_, is_isaac, default_controller_);
 }
 
 ConveyorFeedingUtils::~ConveyorFeedingUtils()
@@ -248,21 +249,18 @@ bool ConveyorFeedingUtils::run()
 	}
 
 	if(debug_){
-		manipulator_.world_marker_->prompt("press 'Next' to switch controllers");
+		manipulator_.world_marker_->prompt("press 'Next' to run the DP velocity segment");
 	}
-	success_ = switch_controllers("forward_velocity_controller", default_controller_);
-
-	if(debug_){
-		manipulator_.world_marker_->prompt("press 'Next' to start DP control");
+	// Switch to velocity control, run the DP model, and switch back once it signals
+	// /dp_exec_done (blocks until done or timeout).
+	auto dp_result = control_switcher_->run_dp_segment();
+	if (!dp_result.has_value()) {
+		RCLCPP_WARN(LOGGER, "DP segment timed out; restored position control");
+	} else if (*dp_result) {
+		RCLCPP_INFO(LOGGER, "DP segment completed successfully");
+	} else {
+		RCLCPP_WARN(LOGGER, "DP segment reported failure (collision/limits exceeded)");
 	}
-	auto start_msg = std_msgs::msg::Empty();
-	pub_dp_exec_start_->publish(start_msg);
-	RCLCPP_INFO(LOGGER, "Wait while DP execution finishes.");
-
-	if(debug_){
-		manipulator_.world_marker_->prompt("press 'Next' to switch controllers back");
-	}
-	success_ = switch_controllers(default_controller_, "forward_velocity_controller");
 
 	if(debug_){
 		manipulator_.world_marker_->prompt("press 'Next' to move back");
@@ -333,48 +331,6 @@ bool ConveyorFeedingUtils::get_grasped_status(int timeout_sec)
 		}
 	}
 	return pin17_state;
-}
-
-bool ConveyorFeedingUtils::switch_controllers(std::string start_ctrl_name, std::string stop_ctrl_name)
-{
-    auto node = std::make_shared<rclcpp::Node>("tmp_controller_switch_node");
-    auto client = node->create_client<controller_manager_msgs::srv::SwitchController>("/controller_manager/switch_controller");
-
-    // Wait for service
-    while (!client->wait_for_service(std::chrono::seconds(2))) {
-        RCLCPP_WARN(LOGGER, "Waiting for /controller_manager/switch_controller service...");
-    }
-
-    auto request = std::make_shared<controller_manager_msgs::srv::SwitchController::Request>();
-
-	std::vector<std::string> start_controllers = {start_ctrl_name};
-    std::vector<std::string> stop_controllers = {stop_ctrl_name};
-    request->activate_controllers = start_controllers;
-    request->deactivate_controllers = stop_controllers;
-    request->strictness = controller_manager_msgs::srv::SwitchController::Request::STRICT;
-    request->activate_asap = true;
-
-    builtin_interfaces::msg::Duration timeout;
-    timeout.sec = 5;
-    timeout.nanosec = 0;
-    request->timeout = timeout;
-
-    auto future = client->async_send_request(request);
-    auto result = rclcpp::spin_until_future_complete(node, future);
-
-    if (result != rclcpp::FutureReturnCode::SUCCESS) {
-        RCLCPP_ERROR(LOGGER, "Failed to call /controller_manager/switch_controller");
-        return false;
-    }
-
-    // Get service response
-    auto response = future.get();
-    if (response->ok) {
-        RCLCPP_INFO(LOGGER, "Controller switch successful");
-        return true;
-    }
-    RCLCPP_ERROR(LOGGER, "Controller switch failed");
-    return false;
 }
 
 } // namespace conveyor_feeding_utils

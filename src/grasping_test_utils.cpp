@@ -14,8 +14,11 @@ GraspingTestUtils::GraspingTestUtils(manipulator_interface::ManipulatorInterface
 	sub_grasp_pose_ = manipulator.node_->create_subscription<geometry_msgs::msg::PoseStamped>(
 		grasp_pose_topic, 10, std::bind(&GraspingTestUtils::grasp_pose_callback, this, _1)
 	);
-	pub_dp_exec_start_ = manipulator.node_->create_publisher<std_msgs::msg::Empty>("dp_exec_start", 10);
 	isaac_vacuum_client_ = manipulator.node_->create_client<std_srvs::srv::SetBool>("/vacuum_gripper/command");
+	// simulation_ (== use_sim_time) signals Isaac Sim, where the control switch must also
+	// flip the joint-drive gains; on real/URSim the gain-flip is a best-effort no-op.
+	control_switcher_ = std::make_unique<edi_bottle_picking::ControlModeSwitcher>(
+		manipulator.node_, simulation_, "joint_trajectory_controller");
 }
 
 GraspingTestUtils::~GraspingTestUtils()
@@ -285,24 +288,21 @@ bool GraspingTestUtils::pick_up()
 	}
 
 	// Hand off from MoveIt trajectory control to the real-time DP (PyTorch) velocity
-	// controller, signal the model to run, then hand back. Gated so model-less runs
-	// (e.g. plain pick/place in sim) can skip the switchover entirely.
+	// controller, run the model, then hand back. run_dp_segment() blocks until the DP
+	// node signals /dp_exec_done (or times out), so control is genuinely back in position
+	// mode before we continue. Gated so model-less runs can skip the switchover entirely.
 	if (run_dp_switchover_) {
 		if(debug_){
-			manipulator_.world_marker_->prompt("press 'Next' to switch controllers");
+			manipulator_.world_marker_->prompt("press 'Next' to run the DP velocity segment");
 		}
-		success_ = switch_controllers("forward_velocity_controller", "joint_trajectory_controller");
-
-		if(debug_){
-			manipulator_.world_marker_->prompt("press 'Next' to start DP control");
+		auto dp_result = control_switcher_->run_dp_segment();
+		if (!dp_result.has_value()) {
+			RCLCPP_WARN(LOGGER, "DP segment timed out; restored position control");
+		} else if (*dp_result) {
+			RCLCPP_INFO(LOGGER, "DP segment completed successfully");
+		} else {
+			RCLCPP_WARN(LOGGER, "DP segment reported failure (collision/limits exceeded)");
 		}
-		auto start_msg = std_msgs::msg::Empty();
-		pub_dp_exec_start_->publish(start_msg);
-
-		if(debug_){
-			manipulator_.world_marker_->prompt("press 'Next' to switch controllers back");
-		}
-		success_ = switch_controllers("joint_trajectory_controller", "forward_velocity_controller");
 	} else {
 		RCLCPP_INFO(LOGGER, "run_dp_switchover disabled: skipping controller switchover and DP start signal");
 	}
@@ -394,48 +394,6 @@ bool GraspingTestUtils::get_grasped_status(int timeout_sec)
 		}
 	}
 	return pin17_state;
-}
-
-bool GraspingTestUtils::switch_controllers(std::string start_ctrl_name, std::string stop_ctrl_name)
-{
-    auto node = std::make_shared<rclcpp::Node>("tmp_controller_switch_node");
-    auto client = node->create_client<controller_manager_msgs::srv::SwitchController>("/controller_manager/switch_controller");
-
-    // Wait for service
-    while (!client->wait_for_service(std::chrono::seconds(2))) {
-        RCLCPP_WARN(LOGGER, "Waiting for /controller_manager/switch_controller service...");
-    }
-
-    auto request = std::make_shared<controller_manager_msgs::srv::SwitchController::Request>();
-
-	std::vector<std::string> start_controllers = {start_ctrl_name};
-    std::vector<std::string> stop_controllers = {stop_ctrl_name};
-    request->activate_controllers = start_controllers;
-    request->deactivate_controllers = stop_controllers;
-    request->strictness = controller_manager_msgs::srv::SwitchController::Request::STRICT;
-    request->activate_asap = true;
-
-    builtin_interfaces::msg::Duration timeout;
-    timeout.sec = 5;
-    timeout.nanosec = 0;
-    request->timeout = timeout;
-
-    auto future = client->async_send_request(request);
-    auto result = rclcpp::spin_until_future_complete(node, future);
-
-    if (result != rclcpp::FutureReturnCode::SUCCESS) {
-        RCLCPP_ERROR(LOGGER, "Failed to call /controller_manager/switch_controller");
-        return false;
-    }
-
-    // Get service response
-    auto response = future.get();
-    if (response->ok) {
-        RCLCPP_INFO(LOGGER, "Controller switch successful");
-        return true;
-    }
-    RCLCPP_ERROR(LOGGER, "Controller switch failed");
-    return false;
 }
 
 } // namespace grasping_test_utils

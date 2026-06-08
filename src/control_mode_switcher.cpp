@@ -1,0 +1,162 @@
+#include <edi_bottle_picking/control_mode_switcher.h>
+
+#include <chrono>
+#include <vector>
+
+using namespace std::chrono_literals;
+using std::placeholders::_1;
+
+namespace edi_bottle_picking
+{
+
+const rclcpp::Logger LOGGER = rclcpp::get_logger("control_mode_switcher");
+
+ControlModeSwitcher::ControlModeSwitcher(rclcpp::Node::SharedPtr node,
+                                         bool is_isaac,
+                                         std::string position_controller,
+                                         std::string velocity_controller)
+    : node_(node), is_isaac_(is_isaac),
+      position_controller_(std::move(position_controller)),
+      velocity_controller_(std::move(velocity_controller)),
+      dp_done_received_(false), dp_done_value_(false)
+{
+    velocity_mode_client_ = node_->create_client<std_srvs::srv::SetBool>("/velocity_control_mode/command");
+    dp_start_pub_ = node_->create_publisher<std_msgs::msg::Empty>("dp_exec_start", 10);
+    dp_done_sub_ = node_->create_subscription<std_msgs::msg::Bool>(
+        "dp_exec_done", 10, std::bind(&ControlModeSwitcher::dp_done_callback, this, _1));
+
+    RCLCPP_INFO(LOGGER, "ControlModeSwitcher: position='%s' velocity='%s' isaac=%s",
+                position_controller_.c_str(), velocity_controller_.c_str(),
+                is_isaac_ ? "true" : "false");
+}
+
+bool ControlModeSwitcher::to_velocity_control()
+{
+    // Controller switch first, then (Isaac) gain flip -- ordering verified on the bench.
+    bool ok = switch_controllers(velocity_controller_, position_controller_);
+    if (is_isaac_) {
+        set_isaac_velocity_mode(true);
+    }
+    return ok;
+}
+
+bool ControlModeSwitcher::to_position_control()
+{
+    // Activate the trajectory controller first (it latches the current pose), then
+    // restore position-control gains so the arm holds against that fresh target.
+    bool ok = switch_controllers(position_controller_, velocity_controller_);
+    if (is_isaac_) {
+        set_isaac_velocity_mode(false);
+    }
+    return ok;
+}
+
+std::optional<bool> ControlModeSwitcher::run_dp_segment(double timeout_sec)
+{
+    {
+        std::lock_guard<std::mutex> lock(dp_mutex_);
+        dp_done_received_ = false;
+    }
+
+    if (!to_velocity_control()) {
+        RCLCPP_ERROR(LOGGER, "DP segment: failed to switch to velocity control; aborting");
+        to_position_control();  // best-effort restore
+        return std::nullopt;
+    }
+
+    auto start_msg = std_msgs::msg::Empty();
+    dp_start_pub_->publish(start_msg);
+    RCLCPP_INFO(LOGGER, "DP segment: published /dp_exec_start, waiting up to %.1fs for /dp_exec_done",
+                timeout_sec);
+
+    std::optional<bool> result;
+    {
+        std::unique_lock<std::mutex> lock(dp_mutex_);
+        bool got = dp_cv_.wait_for(
+            lock, std::chrono::duration<double>(timeout_sec),
+            [this] { return dp_done_received_; });
+        if (got) {
+            result = dp_done_value_;
+        }
+    }
+
+    if (!result.has_value()) {
+        RCLCPP_WARN(LOGGER, "DP segment: timed out waiting for /dp_exec_done");
+    } else {
+        RCLCPP_INFO(LOGGER, "DP segment: /dp_exec_done = %s", *result ? "success" : "failure");
+    }
+
+    // Always restore position control, even on timeout.
+    to_position_control();
+    return result;
+}
+
+bool ControlModeSwitcher::switch_controllers(const std::string & activate,
+                                             const std::string & deactivate)
+{
+    // Use a short-lived node so we can spin_until_future_complete without contending with
+    // the executor that is already spinning node_ on another thread.
+    auto tmp_node = std::make_shared<rclcpp::Node>("tmp_controller_switch_node");
+    auto client = tmp_node->create_client<controller_manager_msgs::srv::SwitchController>(
+        "/controller_manager/switch_controller");
+
+    while (!client->wait_for_service(2s)) {
+        RCLCPP_WARN(LOGGER, "Waiting for /controller_manager/switch_controller service...");
+    }
+
+    auto request = std::make_shared<controller_manager_msgs::srv::SwitchController::Request>();
+    request->activate_controllers = std::vector<std::string>{activate};
+    request->deactivate_controllers = std::vector<std::string>{deactivate};
+    request->strictness = controller_manager_msgs::srv::SwitchController::Request::STRICT;
+    request->activate_asap = true;
+    builtin_interfaces::msg::Duration timeout;
+    timeout.sec = 5;
+    timeout.nanosec = 0;
+    request->timeout = timeout;
+
+    auto future = client->async_send_request(request);
+    if (rclcpp::spin_until_future_complete(tmp_node, future) != rclcpp::FutureReturnCode::SUCCESS) {
+        RCLCPP_ERROR(LOGGER, "Failed to call /controller_manager/switch_controller");
+        return false;
+    }
+    if (future.get()->ok) {
+        RCLCPP_INFO(LOGGER, "Controller switch successful: +%s -%s",
+                    activate.c_str(), deactivate.c_str());
+        return true;
+    }
+    RCLCPP_ERROR(LOGGER, "Controller switch failed: +%s -%s", activate.c_str(), deactivate.c_str());
+    return false;
+}
+
+void ControlModeSwitcher::set_isaac_velocity_mode(bool velocity)
+{
+    if (!velocity_mode_client_->service_is_ready()) {
+        RCLCPP_WARN(LOGGER, "Isaac velocity-mode service '/velocity_control_mode/command' not "
+                            "available; skipping gain flip to %s control",
+                    velocity ? "VELOCITY" : "POSITION");
+        return;
+    }
+    auto request = std::make_shared<std_srvs::srv::SetBool::Request>();
+    request->data = velocity;
+    // Fire-and-forget; the response is handled on the spinning executor thread.
+    velocity_mode_client_->async_send_request(
+        request,
+        [velocity](rclcpp::Client<std_srvs::srv::SetBool>::SharedFuture future) {
+            auto response = future.get();
+            RCLCPP_INFO(LOGGER, "Isaac drive mode -> %s : success=%d (%s)",
+                        velocity ? "VELOCITY" : "POSITION",
+                        response->success, response->message.c_str());
+        });
+}
+
+void ControlModeSwitcher::dp_done_callback(const std_msgs::msg::Bool::SharedPtr msg)
+{
+    {
+        std::lock_guard<std::mutex> lock(dp_mutex_);
+        dp_done_received_ = true;
+        dp_done_value_ = msg->data;
+    }
+    dp_cv_.notify_all();
+}
+
+}  // namespace edi_bottle_picking

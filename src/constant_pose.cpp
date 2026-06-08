@@ -44,7 +44,10 @@ int main(int argc, char ** argv)
   ManipulatorInterface manipulator(application.node_, application.move_group_ptr, application.gripper_action_client_ptr, 
                                    application.tf_buffer_ptr);
 
-  ConstantPoseUtils constant_pose_utils(manipulator, pose_from_topic, pose_topic_name, debug);
+  // use_sim_time signals Isaac Sim (URSim/real run wall-clock); the facade only sends the
+  // Isaac drive-gain flip when this is true.
+  bool is_isaac = application.node_->get_parameter("use_sim_time").as_bool();
+  ConstantPoseUtils constant_pose_utils(manipulator, pose_from_topic, pose_topic_name, debug, is_isaac);
 
   rclcpp::Duration d = rclcpp::Duration::from_seconds(1.0);
   if(!application.gripper_action_client_ptr->wait_for_action_server(d.to_chrono<std::chrono::duration<double>>())) {
