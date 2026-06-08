@@ -17,6 +17,12 @@
   <depend>edi_robot_msgs</depend>
   <depend>ur_msgs</depend>
   <depend>controller_manager_msgs</depend>
+  <!-- SetBool client (grasping_test) + vacuum_gripper_bridge.py service -->
+  <depend>std_srvs</depend>
+
+  <!-- vacuum_gripper_bridge.py (rclpy node relaying grip commands to Isaac Sim) -->
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

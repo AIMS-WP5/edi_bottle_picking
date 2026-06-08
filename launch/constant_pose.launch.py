@@ -4,7 +4,7 @@ from launch_ros.actions import Node
 def generate_launch_description():
 
     edi_parameters = {
-        "use_sim_time": True
+        "use_sim_time": False
     }
 
     # Start the actual move_group node/action server

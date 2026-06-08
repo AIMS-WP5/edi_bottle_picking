@@ -8,6 +8,7 @@
 #include <controller_manager_msgs/srv/switch_controller.hpp>
 #include <builtin_interfaces/msg/duration.hpp>
 #include <std_msgs/msg/empty.hpp>
+#include <std_srvs/srv/set_bool.hpp>
 #include <chrono>
 
 
@@ -16,7 +17,7 @@ namespace grasping_test_utils
 	class GraspingTestUtils
     {
     public:
-    GraspingTestUtils(manipulator_interface::ManipulatorInterface& manipulator, std::string grasp_pose_topic, bool debug = false); // Constructor
+    GraspingTestUtils(manipulator_interface::ManipulatorInterface& manipulator, std::string grasp_pose_topic, bool debug = false, bool simulation = false, bool run_dp_switchover = true); // Constructor
 
     ~GraspingTestUtils(); // Destructor
 
@@ -44,10 +45,19 @@ namespace grasping_test_utils
     bool switch_controllers(std::string start_ctrl_name, std::string stop_ctrl_name);
 
 	private:
+        /** \brief Command the vacuum gripper: drives the real UR gripper AND mirrors the
+            command to Isaac Sim's vacuum bridge. Returns the real-gripper result. */
+        bool command_vacuum(bool grip);
+        /** \brief Best-effort SetBool call to the Isaac vacuum bridge (no-op if absent). */
+        void set_isaac_vacuum(bool grip);
+
         manipulator_interface::ManipulatorInterface& manipulator_;
         bool debug_, success_;
+        bool simulation_;
+        bool run_dp_switchover_;
         rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr sub_grasp_pose_;
         rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr pub_dp_exec_start_;
+        rclcpp::Client<std_srvs::srv::SetBool>::SharedPtr isaac_vacuum_client_;
         geometry_msgs::msg::Pose curr_grasp_pose_;
 	};
 

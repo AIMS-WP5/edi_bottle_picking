@@ -16,6 +16,7 @@ find_package(edi_robot_msgs REQUIRED)
 find_package(ur_msgs REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(controller_manager_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
 
 add_executable(edi_bottle_picking src/edi_bottle_picking.cpp
 				   src/edi_bottle_picking_utils.cpp)
@@ -56,6 +57,7 @@ ament_target_dependencies(
   ur_msgs
   yaml-cpp
   controller_manager_msgs
+  std_srvs
 )
 
 add_executable(constant_pose src/constant_pose.cpp
@@ -112,6 +114,11 @@ install(
     grasping_test
     constant_pose
     conveyor_feeding
+  DESTINATION lib/${PROJECT_NAME})
+
+# Python nodes (rclpy) installed as executables: ros2 run edi_bottle_picking <name>.py
+install(PROGRAMS
+  scripts/vacuum_gripper_bridge.py
   DESTINATION lib/${PROJECT_NAME})
 
 install(

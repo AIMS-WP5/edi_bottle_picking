@@ -8,18 +8,56 @@ namespace grasping_test_utils
 
 const rclcpp::Logger LOGGER = rclcpp::get_logger("grasping_test_utils");
 
-GraspingTestUtils::GraspingTestUtils(manipulator_interface::ManipulatorInterface& manipulator, std::string grasp_pose_topic, bool debug)
-    : manipulator_(manipulator), debug_(debug)
+GraspingTestUtils::GraspingTestUtils(manipulator_interface::ManipulatorInterface& manipulator, std::string grasp_pose_topic, bool debug, bool simulation, bool run_dp_switchover)
+    : manipulator_(manipulator), debug_(debug), simulation_(simulation), run_dp_switchover_(run_dp_switchover)
 {
 	sub_grasp_pose_ = manipulator.node_->create_subscription<geometry_msgs::msg::PoseStamped>(
 		grasp_pose_topic, 10, std::bind(&GraspingTestUtils::grasp_pose_callback, this, _1)
 	);
 	pub_dp_exec_start_ = manipulator.node_->create_publisher<std_msgs::msg::Empty>("dp_exec_start", 10);
+	isaac_vacuum_client_ = manipulator.node_->create_client<std_srvs::srv::SetBool>("/vacuum_gripper/command");
 }
 
 GraspingTestUtils::~GraspingTestUtils()
 {
     // Destructor implementation
+}
+
+bool GraspingTestUtils::command_vacuum(bool grip)
+{
+	bool ok;
+	if (simulation_) {
+		// Isaac/TopicBasedSystem has no UR /set_io service, so activate_vacuum_gripper()
+		// would block ~5 s on it and report the grasp failed (aborting the pick). In sim
+		// the suction is modelled entirely by the Isaac bridge, so skip the UR IO path.
+		ok = true;
+	} else {
+		// Drive the real UR vacuum gripper (via UR IO) -- unchanged behaviour on hardware.
+		ok = manipulator_.activate_vacuum_gripper(grip);
+	}
+	// Mirror the same command to Isaac Sim's (hacky) vacuum bridge. Best-effort, so a
+	// real-hardware run with no bridge just logs a warning and continues.
+	set_isaac_vacuum(grip);
+	return ok;
+}
+
+void GraspingTestUtils::set_isaac_vacuum(bool grip)
+{
+	if (!isaac_vacuum_client_->service_is_ready()) {
+		RCLCPP_WARN(LOGGER, "Isaac vacuum service '/vacuum_gripper/command' not available; "
+		                    "skipping sim %s command", grip ? "GRIP" : "RELEASE");
+		return;
+	}
+	auto request = std::make_shared<std_srvs::srv::SetBool::Request>();
+	request->data = grip;
+	// Fire-and-forget; the response is handled on the spinning executor thread.
+	isaac_vacuum_client_->async_send_request(
+		request,
+		[grip](rclcpp::Client<std_srvs::srv::SetBool>::SharedFuture future) {
+			auto response = future.get();
+			RCLCPP_INFO(LOGGER, "Isaac vacuum %s -> success=%d (%s)",
+			            grip ? "GRIP" : "RELEASE", response->success, response->message.c_str());
+		});
 }
 
 bool GraspingTestUtils::add_box() {
@@ -140,7 +178,7 @@ bool GraspingTestUtils::pick_up()
 	if(debug_){
 		manipulator_.world_marker_->prompt("press 'Next' to open the gripper");
 	}
-	success_ = manipulator_.activate_vacuum_gripper(false);
+	success_ = command_vacuum(false);
 	if (!success_) {
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
@@ -204,7 +242,7 @@ bool GraspingTestUtils::pick_up()
 	}
 
 	manipulator_.attach_collision_object(coll_obj);
-	success_ = manipulator_.activate_vacuum_gripper(true);
+	success_ = command_vacuum(true);
 	if (!success_) {
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
@@ -216,7 +254,7 @@ bool GraspingTestUtils::pick_up()
 	success_ = get_grasped_status();
 	if (!success_) {
 		RCLCPP_ERROR(LOGGER, "Bottle not grasped!");
-		manipulator_.activate_vacuum_gripper(false);
+		command_vacuum(false);
 		manipulator_.world_marker_->prompt("press 'Next' to move back above box");
 		success_ = manipulator_.predefined_pose("above_box_1");
 		return 0;
@@ -246,21 +284,28 @@ bool GraspingTestUtils::pick_up()
 		return 0;
 	}
 
-	if(debug_){
-		manipulator_.world_marker_->prompt("press 'Next' to switch controllers");
-	}
-	success_ = switch_controllers("forward_velocity_controller", "joint_trajectory_controller");
+	// Hand off from MoveIt trajectory control to the real-time DP (PyTorch) velocity
+	// controller, signal the model to run, then hand back. Gated so model-less runs
+	// (e.g. plain pick/place in sim) can skip the switchover entirely.
+	if (run_dp_switchover_) {
+		if(debug_){
+			manipulator_.world_marker_->prompt("press 'Next' to switch controllers");
+		}
+		success_ = switch_controllers("forward_velocity_controller", "joint_trajectory_controller");
 
-	if(debug_){
-		manipulator_.world_marker_->prompt("press 'Next' to start DP control");
-	}
-	auto start_msg = std_msgs::msg::Empty();
-	pub_dp_exec_start_->publish(start_msg);
+		if(debug_){
+			manipulator_.world_marker_->prompt("press 'Next' to start DP control");
+		}
+		auto start_msg = std_msgs::msg::Empty();
+		pub_dp_exec_start_->publish(start_msg);
 
-	if(debug_){
-		manipulator_.world_marker_->prompt("press 'Next' to switch controllers back");
+		if(debug_){
+			manipulator_.world_marker_->prompt("press 'Next' to switch controllers back");
+		}
+		success_ = switch_controllers("joint_trajectory_controller", "forward_velocity_controller");
+	} else {
+		RCLCPP_INFO(LOGGER, "run_dp_switchover disabled: skipping controller switchover and DP start signal");
 	}
-	success_ = switch_controllers("joint_trajectory_controller", "forward_velocity_controller");
 
 	if(debug_){
 		manipulator_.world_marker_->prompt("press 'Next' to move back to starting position");
@@ -284,7 +329,7 @@ bool GraspingTestUtils::put_down()
 		RCLCPP_ERROR(LOGGER, "Putting back failed!");
 		return 0;
 	}
-	success_ = manipulator_.activate_vacuum_gripper(false);
+	success_ = command_vacuum(false);
 	if (!success_) {
 		RCLCPP_ERROR(LOGGER, "Putting back failed!");
 	} else {
@@ -306,6 +351,12 @@ void GraspingTestUtils::grasp_pose_callback(const geometry_msgs::msg::PoseStampe
 
 bool GraspingTestUtils::get_grasped_status(int timeout_sec)
 {
+	if (simulation_) {
+		// No UR digital IO in Isaac Sim; the (hacky) vacuum bridge always "grasps".
+		RCLCPP_INFO(LOGGER, "Simulation mode: assuming successful grasp (skipping UR IO pin-17 check)");
+		return true;
+	}
+
 	auto node = rclcpp::Node::make_shared("tmp_grasp_status_node");
 	ur_msgs::msg::IOStates received_msg;
 	bool received = false;
