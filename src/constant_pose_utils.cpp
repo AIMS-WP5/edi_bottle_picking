@@ -21,15 +21,16 @@ ConstantPoseUtils::ConstantPoseUtils(manipulator_interface::ManipulatorInterface
 		curr_grasp_pose_.position.x = -0.429720;
 		curr_grasp_pose_.position.y = 0.224214;
 		curr_grasp_pose_.position.z = 0.938;
-		curr_grasp_pose_.orientation.x = -0.999353691;
-		curr_grasp_pose_.orientation.y = 0.012828515;
-		curr_grasp_pose_.orientation.z = 0.027794998;
-		curr_grasp_pose_.orientation.w = -0.00722554;
+		curr_grasp_pose_.orientation.x = -0.697684;
+		curr_grasp_pose_.orientation.y = 0.715829;
+		curr_grasp_pose_.orientation.z = 0.024767;
+		curr_grasp_pose_.orientation.w = 0.014547;
 	}
 	pub_dp_exec_start_ = manipulator.node_->create_publisher<std_msgs::msg::Empty>("dp_exec_start", 10);
 	sub_dp_exec_done_ = manipulator.node_->create_subscription<std_msgs::msg::Bool>(
 		"dp_exec_done", 10, std::bind(&ConstantPoseUtils::dp_exec_done_callback, this, _1)
 	);
+	dp_exec_successful_ = false;
 }
 
 ConstantPoseUtils::~ConstantPoseUtils()
@@ -102,7 +103,7 @@ bool ConstantPoseUtils::pickup()
     if(debug_){
         manipulator_.world_marker_->prompt("press 'Next' to go to position above pickup place");
     }
-    success_ = manipulator_.predefined_pose("wait_slam");
+    success_ = manipulator_.predefined_pose("ai_after_pickup");
     if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
@@ -163,6 +164,15 @@ bool ConstantPoseUtils::pickup()
 	}
 
 	if(debug_){
+		manipulator_.world_marker_->prompt("press 'Next' to move further");
+	}
+	success_ = manipulator_.predefined_pose("ai_after_pickup");
+	if(!success_){
+		RCLCPP_ERROR(LOGGER, "Pick action failed!");
+		return 0;
+	}
+
+	if(debug_){
 		manipulator_.world_marker_->prompt("press 'Next' to move above socket");
 	}
 	success_ = manipulator_.predefined_pose("ai_start2");
@@ -212,6 +222,15 @@ bool ConstantPoseUtils::pickup()
 	if(debug_){
 		manipulator_.world_marker_->prompt("press 'Next' to go back");
 	}
+	success_ = manipulator_.predefined_pose("ai_start2");
+	if(!success_){
+		RCLCPP_ERROR(LOGGER, "Pick action failed!");
+		return 0;
+	}
+
+	if(debug_){
+		manipulator_.world_marker_->prompt("press 'Next' to go back");
+	}
 	success_ = manipulator_.predefined_pose("wait_slam");
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
@@ -224,7 +243,7 @@ bool ConstantPoseUtils::pickup()
 		return 0;
 	}
 
-	success_ = manipulator_.cartesian_goal(pick_poses[1], 15);
+	success_ = manipulator_.cartesian_goal(pick_poses[1]);
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
@@ -242,11 +261,12 @@ bool ConstantPoseUtils::pickup()
 	geometry_msgs::msg::Pose retreat_pose = pick_poses[1];
 	retreat_pose.position.z = retreat_pose.position.z + 0.01;
 
-	success_ = manipulator_.cartesian_goal(retreat_pose, 10);
+	success_ = manipulator_.cartesian_goal(retreat_pose);
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
 	}
+
 	success_ = manipulator_.activate_vacuum_gripper(false);
 	if (!success_) {
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
