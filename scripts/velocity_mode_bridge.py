@@ -34,6 +34,7 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Bool
 from std_srvs.srv import SetBool
+from sensor_msgs.msg import JointState
 
 
 class VelocityModeBridge(Node):
@@ -44,15 +45,32 @@ class VelocityModeBridge(Node):
         self.declare_parameter("service", "/velocity_control_mode/command")
         self.declare_parameter("publish_rate_hz", 10.0)
         self.declare_parameter("initial_state", False)  # start in position control
+        # On the switch back to position control, refresh Isaac's position target to the
+        # current measured pose (published as a one-shot command) BEFORE restoring stiffness,
+        # so the restored kp doesn't yank the arm toward the stale pre-velocity-segment target.
+        self.declare_parameter("refresh_position_target", True)
+        self.declare_parameter("command_topic", "/isaac_joint_commands")
+        self.declare_parameter("joint_states_topic", "/joint_states")
 
         topic = self.get_parameter("topic").value
         service = self.get_parameter("service").value
         rate = float(self.get_parameter("publish_rate_hz").value)
         self._state = bool(self.get_parameter("initial_state").value)
+        self._refresh = bool(self.get_parameter("refresh_position_target").value)
 
         self._pub = self.create_publisher(Bool, topic, 1)
         self._srv = self.create_service(SetBool, service, self._on_set)
         self._timer = self.create_timer(1.0 / rate, self._publish)
+
+        # Cache the latest /joint_states so we can re-publish the current pose as a hold
+        # command on the velocity->position switch.
+        self._latest_js = None
+        self._cmd_pub = self.create_publisher(
+            JointState, self.get_parameter("command_topic").value, 1
+        )
+        self._js_sub = self.create_subscription(
+            JointState, self.get_parameter("joint_states_topic").value, self._on_js, 10
+        )
 
         self.get_logger().info(
             f"velocity mode bridge: call '{service}' (SetBool) -> Bool on '{topic}' "
@@ -61,14 +79,39 @@ class VelocityModeBridge(Node):
         self._publish()  # announce initial state immediately
 
     def _on_set(self, request, response):
-        self._state = bool(request.data)
+        new_state = bool(request.data)
+        # Switching back to POSITION control: first pin Isaac's position target to the current
+        # measured pose so restoring stiffness holds the arm where it is, instead of springing
+        # it toward the stale (pre-DP-segment) target.  Publish the hold command BEFORE the
+        # gain Bool flips below.
+        if self._refresh and (not new_state) and self._latest_js is not None:
+            self._publish_hold_command()
+        self._state = new_state
         self._publish()
         response.message = (
-            "VELOCITY control (kp=0)" if self._state else "POSITION control (USD gains)"
+            "VELOCITY control (kp=0)" if self._state else "POSITION control (explicit gains)"
         )
         response.success = True
         self.get_logger().info(f"drive mode -> {response.message}")
         return response
+
+    def _on_js(self, msg):
+        self._latest_js = msg
+
+    def _publish_hold_command(self):
+        """Publish the current measured pose on the Isaac joint-command topic as a one-shot
+        hold target (zero velocities), so restoring position stiffness does not spring the arm."""
+        js = self._latest_js
+        cmd = JointState()
+        cmd.header.stamp = self.get_clock().now().to_msg()
+        cmd.name = list(js.name)
+        cmd.position = list(js.position)
+        cmd.velocity = [0.0] * len(js.position)
+        self._cmd_pub.publish(cmd)
+        self.get_logger().info(
+            f"refreshed Isaac position target to current pose "
+            f"({len(cmd.position)} joints) before restoring stiffness"
+        )
 
     def _publish(self):
         self._pub.publish(Bool(data=self._state))
