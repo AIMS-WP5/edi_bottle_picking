@@ -119,6 +119,7 @@ install(
 # Python nodes (rclpy) installed as executables: ros2 run edi_bottle_picking <name>.py
 install(PROGRAMS
   scripts/vacuum_gripper_bridge.py
+  scripts/velocity_mode_bridge.py
   DESTINATION lib/${PROJECT_NAME})
 
 install(
