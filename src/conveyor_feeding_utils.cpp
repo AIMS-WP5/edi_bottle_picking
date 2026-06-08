@@ -25,7 +25,7 @@ ConveyorFeedingUtils::~ConveyorFeedingUtils()
 bool ConveyorFeedingUtils::add_box() {
 	moveit_msgs::msg::CollisionObject coll_obj;
 	geometry_msgs::msg::Pose pose;
-	pose.position.x = -0.55;
+	pose.position.x = -0.45;
 	pose.position.y = -0.50;
 	pose.position.z = 0.93;
 	bool success = manipulator_.add_collision_box(pose, "world", coll_obj, 0.40, 0.30, 0.15, 0.015);

@@ -25,7 +25,7 @@ GraspingTestUtils::~GraspingTestUtils()
 bool GraspingTestUtils::add_box() {
 	moveit_msgs::msg::CollisionObject coll_obj;
 	geometry_msgs::msg::Pose pose;
-	pose.position.x = -0.55;
+	pose.position.x = -0.45;
 	pose.position.y = -0.50;
 	pose.position.z = 0.93;
 	bool success = manipulator_.add_collision_box(pose, "world", coll_obj, 0.40, 0.30, 0.15, 0.015);
@@ -249,7 +249,8 @@ bool GraspingTestUtils::pick_up()
 	if(debug_){
 		manipulator_.world_marker_->prompt("press 'Next' to switch controllers");
 	}
-	success_ = switch_controllers("forward_velocity_controller", "joint_trajectory_controller");
+	success_ = switch_controllers("forward_velocity_controller", "scaled_joint_trajectory_controller");
+	// success_ = switch_controllers("forward_velocity_controller", "joint_trajectory_controller");
 
 	if(debug_){
 		manipulator_.world_marker_->prompt("press 'Next' to start DP control");
@@ -258,9 +259,20 @@ bool GraspingTestUtils::pick_up()
 	pub_dp_exec_start_->publish(start_msg);
 
 	if(debug_){
+		manipulator_.world_marker_->prompt("press 'Next' to release bottle");
+	}
+	success_ = manipulator_.activate_vacuum_gripper(false);
+	if (!success_) {
+		RCLCPP_ERROR(LOGGER, "Pick action failed!");
+		return 0;
+	} else {
+		RCLCPP_INFO(LOGGER, "Suction disabled!");
+	}
+
+	if(debug_){
 		manipulator_.world_marker_->prompt("press 'Next' to switch controllers back");
 	}
-	success_ = switch_controllers("joint_trajectory_controller", "forward_velocity_controller");
+	success_ = switch_controllers("scaled_joint_trajectory_controller", "forward_velocity_controller");
 
 	if(debug_){
 		manipulator_.world_marker_->prompt("press 'Next' to move back to starting position");
