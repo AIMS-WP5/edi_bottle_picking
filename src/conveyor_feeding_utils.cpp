@@ -191,7 +191,9 @@ bool ConveyorFeedingUtils::run()
 	}
 	geometry_msgs::msg::PoseStamped grasp_pose_stamped;
 	grasp_pose_stamped.pose = grasp_pose;
-	grasp_pose_stamped.header.frame_id = "realsense_455_on_stand";
+	// Honor the publisher's frame_id when set (e.g. "world" from the Isaac sim); fall
+	// back to the camera frame for the real vision pipeline, which leaves it empty.
+	grasp_pose_stamped.header.frame_id = curr_grasp_frame_.empty() ? "realsense_455_on_stand" : curr_grasp_frame_;
 	geometry_msgs::msg::PoseStamped pick_pose_stamped = manipulator_.transform_pose("world", grasp_pose_stamped);
 	geometry_msgs::msg::Pose pick_pose = pick_pose_stamped.pose;
 	manipulator_.world_marker_->publishAxisLabeled(pick_pose, "Object_pose");
@@ -340,6 +342,7 @@ geometry_msgs::msg::Pose ConveyorFeedingUtils::get_curr_grasp_pose()
 void ConveyorFeedingUtils::grasp_pose_callback(const geometry_msgs::msg::PoseStamped::SharedPtr msg)
 {
 	curr_grasp_pose_ = msg->pose;
+	curr_grasp_frame_ = msg->header.frame_id;
 }
 
 bool ConveyorFeedingUtils::get_grasped_status(int timeout_sec)

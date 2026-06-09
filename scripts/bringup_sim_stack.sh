@@ -9,13 +9,18 @@
 #
 # Usage:
 #   bringup_sim_stack.sh [--model NAME] [--steps N] [--collision-check true|false]
-#                        [--gripper TYPE] [--no-pick] [--no-attach]
+#                        [--gripper TYPE] [--no-pick] [--no-attach] [--best-grasp]
 #   bringup_sim_stack.sh down            # Ctrl-C every node and kill the tmux session
 #
 # Examples:
 #   bringup_sim_stack.sh --model 2026_06_xx_model_2 --steps 100      # your new checkpoint
 #   bringup_sim_stack.sh                                             # known-good defaults
+#   bringup_sim_stack.sh --best-grasp                               # use stand-in /best_grasp pub (not Isaac)
 #   bringup_sim_stack.sh down
+#
+# NB: by default /best_grasp is published by the Isaac OmniGraph (per-bottle grasp poses
+# from the scene). --best-grasp instead runs the best_grasp_pub.py stand-in; do NOT use
+# both at once -- two publishers on /best_grasp race and the pick target becomes nondeterministic.
 #
 # NB: no `set -u` -- sourcing ROS/ament setup.bash references unset vars and would abort
 # the script under `set -u` (e.g. AMENT_TRACE_SETUP_FILES: unbound variable).
@@ -35,6 +40,11 @@ COLLISION_CHECK="false"
 GRIPPER_TYPE="vacuum"
 RUN_PICK=1
 ATTACH=1
+# Optional stand-in vision publisher on /best_grasp. Disabled by default: the Isaac
+# OmniGraph now publishes /best_grasp from the scene's bottle coordinates, so running the
+# stand-in too would put two racing publishers on the topic. Enable with --best-grasp only
+# when driving the pick from the stand-in instead of Isaac.
+RUN_BESTGRASP=0
 
 # ---------- subcommand: tear the stack down ----------
 if [[ "${1:-}" == "down" || "${1:-}" == "--down" || "${1:-}" == "stop" ]]; then
@@ -60,6 +70,7 @@ while [[ $# -gt 0 ]]; do
         --gripper)          GRIPPER_TYPE="$2"; shift 2;;
         --no-pick)          RUN_PICK=0; shift;;
         --no-attach)        ATTACH=0; shift;;
+        --best-grasp)       RUN_BESTGRASP=1; shift;;
         -h|--help)          awk 'NR>1 && /^#/{sub(/^# ?/,""); print; next} NR>1{exit}' "$0"; exit 0;;
         *) echo "unknown arg: $1 (try --help)" >&2; exit 1;;
     esac
@@ -67,7 +78,7 @@ done
 
 command -v tmux >/dev/null || { echo "tmux not installed -> sudo apt install tmux" >&2; exit 1; }
 [[ -f "$ENV_HELPER" ]]  || { echo "missing env helper: $ENV_HELPER" >&2; exit 1; }
-[[ -f "$BEST_GRASP" ]]  || { echo "missing grasp stand-in: $BEST_GRASP" >&2; exit 1; }
+(( RUN_BESTGRASP )) && { [[ -f "$BEST_GRASP" ]] || { echo "missing grasp stand-in: $BEST_GRASP" >&2; exit 1; }; }
 mkdir -p "$LOGDIR"
 DISP="${DISPLAY:-:1}"
 
@@ -115,9 +126,13 @@ newwin vacbridge "ros2 launch edi_bottle_picking vacuum_gripper_bridge.launch.py
 wait_for "controllers" "timeout 6 ros2 control list_controllers 2>/dev/null | grep -q 'joint_trajectory_controller.*active'" 90
 wait_for "move_group"  "ros2 node list 2>/dev/null | grep -q /move_group" 90
 
-echo "== phase 2: DP node ($MODEL_NAME, steps=$STEP_COUNT) + grasp stand-in =="
+echo "== phase 2: DP node ($MODEL_NAME, steps=$STEP_COUNT)$( ((RUN_BESTGRASP)) && echo ' + grasp stand-in') =="
 newwin dp        "ros2 launch diff_physics launch.yaml model_run:=true model_name:=$MODEL_NAME step_count:=$STEP_COUNT collision_check:=$COLLISION_CHECK use_sim_time:=true"
-newwin bestgrasp "python3 -u $BEST_GRASP --ros-args -p use_sim_time:=true"
+# /best_grasp is normally published by the Isaac OmniGraph (per-bottle grasp poses); the
+# stand-in below would be a SECOND publisher on the same topic, so it's opt-in (--best-grasp).
+if (( RUN_BESTGRASP )); then
+    newwin bestgrasp "python3 -u $BEST_GRASP --ros-args -p use_sim_time:=true"
+fi
 
 if (( RUN_PICK )); then
     wait_for "/object_point (DP add_pad)" "timeout 5 ros2 topic echo /object_point --once 2>/dev/null | grep -q 'x:'" 60
@@ -128,7 +143,7 @@ fi
 echo
 echo "tmux session '$SESSION' is up."
 echo "  model=$MODEL_NAME  steps=$STEP_COUNT  collision_check=$COLLISION_CHECK  gripper=$GRIPPER_TYPE"
-echo "  windows: control moveit velbridge vacbridge dp bestgrasp$( ((RUN_PICK)) && echo ' pick')"
+echo "  windows: control moveit velbridge vacbridge dp$( ((RUN_BESTGRASP)) && echo ' bestgrasp')$( ((RUN_PICK)) && echo ' pick')"
 echo "  logs:    $LOGDIR/<window>.log"
 echo "  navigate: Ctrl-b w (picker) | Ctrl-b <n> | Ctrl-b n / Ctrl-b p"
 echo "  detach:   Ctrl-b d        tear down: $0 down"

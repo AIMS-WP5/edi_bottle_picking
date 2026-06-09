@@ -52,6 +52,8 @@ namespace conveyor_feeding_utils
         rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr sub_grasp_pose_;
         rclcpp::Client<std_srvs::srv::SetBool>::SharedPtr isaac_vacuum_client_;
         geometry_msgs::msg::Pose curr_grasp_pose_;
+        // frame_id of the last received grasp pose; empty -> assume the camera frame.
+        std::string curr_grasp_frame_;
         std::string default_controller_;
         std::unique_ptr<edi_bottle_picking::ControlModeSwitcher> control_switcher_;
 	};

@@ -56,6 +56,8 @@ namespace grasping_test_utils
         rclcpp::Client<std_srvs::srv::SetBool>::SharedPtr isaac_vacuum_client_;
         std::unique_ptr<edi_bottle_picking::ControlModeSwitcher> control_switcher_;
         geometry_msgs::msg::Pose curr_grasp_pose_;
+        // frame_id of the last received grasp pose; empty -> assume the camera frame.
+        std::string curr_grasp_frame_;
 	};
 
 }
