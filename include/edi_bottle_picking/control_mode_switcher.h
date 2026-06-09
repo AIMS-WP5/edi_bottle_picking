@@ -50,13 +50,22 @@ public:
      *  /dp_exec_start -> wait for /dp_exec_done (up to \p timeout_sec) ->
      *  to_position_control().  Returns the DP result (true = success, false =
      *  collision/limits) or std::nullopt on timeout.  Position control is always
-     *  restored, even on timeout or a failed velocity switch. */
+     *  restored, even on timeout or a failed velocity switch.
+     *
+     *  The segment is also bracketed by the can_update_socket handshake: the external
+     *  socket/target-coordinate provider is told to freeze (false) before the velocity
+     *  switch and released (true) once position control is restored, so the insertion
+     *  target cannot drift mid-segment ("get socket pos once"). */
     std::optional<bool> run_dp_segment(double timeout_sec = 20.0);
 
 private:
     bool switch_controllers(const std::string & activate, const std::string & deactivate);
     void set_isaac_velocity_mode(bool velocity);   // best-effort SetBool, no-op if absent
     void dp_done_callback(const std_msgs::msg::Bool::SharedPtr msg);
+    /** \brief Publish the socket-coordinate freeze handshake on /can_update_socket: false
+        latches the external provider for the DP segment, true releases it. Best-effort --
+        no subscriber is required to be present. */
+    void publish_can_update_socket(bool can_update);
 
     rclcpp::Node::SharedPtr node_;
     bool is_isaac_;
@@ -66,6 +75,7 @@ private:
     rclcpp::Client<std_srvs::srv::SetBool>::SharedPtr velocity_mode_client_;
     rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr dp_start_pub_;
     rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr dp_done_sub_;
+    rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr can_update_socket_pub_;
 
     std::mutex dp_mutex_;
     std::condition_variable dp_cv_;

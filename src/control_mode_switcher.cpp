@@ -24,6 +24,7 @@ ControlModeSwitcher::ControlModeSwitcher(rclcpp::Node::SharedPtr node,
     dp_start_pub_ = node_->create_publisher<std_msgs::msg::Empty>("dp_exec_start", 10);
     dp_done_sub_ = node_->create_subscription<std_msgs::msg::Bool>(
         "dp_exec_done", 10, std::bind(&ControlModeSwitcher::dp_done_callback, this, _1));
+    can_update_socket_pub_ = node_->create_publisher<std_msgs::msg::Bool>("can_update_socket", 10);
 
     RCLCPP_INFO(LOGGER, "ControlModeSwitcher: position='%s' velocity='%s' isaac=%s",
                 position_controller_.c_str(), velocity_controller_.c_str(),
@@ -58,9 +59,14 @@ std::optional<bool> ControlModeSwitcher::run_dp_segment(double timeout_sec)
         dp_done_received_ = false;
     }
 
+    // Freeze the external socket/target provider for the duration of the segment so the
+    // insertion target is sampled once and cannot drift while DP is executing.
+    publish_can_update_socket(false);
+
     if (!to_velocity_control()) {
         RCLCPP_ERROR(LOGGER, "DP segment: failed to switch to velocity control; aborting");
         to_position_control();  // best-effort restore
+        publish_can_update_socket(true);
         return std::nullopt;
     }
 
@@ -88,6 +94,9 @@ std::optional<bool> ControlModeSwitcher::run_dp_segment(double timeout_sec)
 
     // Always restore position control, even on timeout.
     to_position_control();
+    // Release the socket/target provider now that the segment is done and position
+    // control is restored.
+    publish_can_update_socket(true);
     return result;
 }
 
@@ -157,6 +166,15 @@ void ControlModeSwitcher::dp_done_callback(const std_msgs::msg::Bool::SharedPtr 
         dp_done_value_ = msg->data;
     }
     dp_cv_.notify_all();
+}
+
+void ControlModeSwitcher::publish_can_update_socket(bool can_update)
+{
+    auto msg = std_msgs::msg::Bool();
+    msg.data = can_update;
+    can_update_socket_pub_->publish(msg);
+    RCLCPP_INFO(LOGGER, "Published /can_update_socket = %s (%s socket/target provider)",
+                can_update ? "true" : "false", can_update ? "release" : "freeze");
 }
 
 }  // namespace edi_bottle_picking

@@ -21,10 +21,10 @@ ConstantPoseUtils::ConstantPoseUtils(manipulator_interface::ManipulatorInterface
 		curr_grasp_pose_.position.x = -0.429720;
 		curr_grasp_pose_.position.y = 0.224214;
 		curr_grasp_pose_.position.z = 0.938;
-		curr_grasp_pose_.orientation.x = -0.999353691;
-		curr_grasp_pose_.orientation.y = 0.012828515;
-		curr_grasp_pose_.orientation.z = 0.027794998;
-		curr_grasp_pose_.orientation.w = -0.00722554;
+		curr_grasp_pose_.orientation.x = -0.697684;
+		curr_grasp_pose_.orientation.y = 0.715829;
+		curr_grasp_pose_.orientation.z = 0.024767;
+		curr_grasp_pose_.orientation.w = 0.014547;
 	}
 	control_switcher_ = std::make_unique<edi_bottle_picking::ControlModeSwitcher>(
 		manipulator.node_, is_isaac, "joint_trajectory_controller");
