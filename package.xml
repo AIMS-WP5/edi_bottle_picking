@@ -19,10 +19,12 @@
   <depend>controller_manager_msgs</depend>
   <!-- SetBool client (grasping_test) + vacuum_gripper_bridge.py service -->
   <depend>std_srvs</depend>
+  <!-- std_msgs: /conveyor_feeding/debug live toggle; sensor_msgs: /rviz_visual_tools_gui 'Next' -->
+  <depend>std_msgs</depend>
+  <depend>sensor_msgs</depend>
 
   <!-- vacuum_gripper_bridge.py (rclpy node relaying grip commands to Isaac Sim) -->
   <exec_depend>rclpy</exec_depend>
-  <exec_depend>std_msgs</exec_depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

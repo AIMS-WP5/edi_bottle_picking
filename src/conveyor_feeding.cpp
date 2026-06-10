@@ -47,6 +47,16 @@ int main(int argc, char ** argv)
   // use_sim_time signals Isaac Sim (URSim/real run wall-clock); the facade only sends the
   // Isaac drive-gain flip when this is true.
   bool is_isaac = application.node_->get_parameter("use_sim_time").as_bool();
+
+  // The YAML value is the default; a `debug` ROS param (set by conveyor_feeding.launch.py /
+  // bringup_sim_stack.sh --debug|--no-debug) overrides it. It can also be toggled live at
+  // runtime by publishing std_msgs/Bool on /conveyor_feeding/debug (see maybe_prompt).
+  // The node auto-declares parameters from launch overrides, so the launch-provided `debug`
+  // is already declared by now -- guard against re-declaring it (ParameterAlreadyDeclared).
+  if (!application.node_->has_parameter("debug")) {
+    application.node_->declare_parameter("debug", debug);
+  }
+  debug = application.node_->get_parameter("debug").as_bool();
   ConveyorFeedingUtils conveyor_feeding_utils(manipulator, grasp_pose_topic, default_controller, debug, is_isaac);
 
   rclcpp::Duration d = rclcpp::Duration::from_seconds(1.0);

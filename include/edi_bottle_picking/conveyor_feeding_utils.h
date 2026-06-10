@@ -7,8 +7,12 @@
 #include <ur_msgs/msg/io_states.hpp>
 #include <ur_msgs/msg/digital.hpp>
 #include <std_srvs/srv/set_bool.hpp>
+#include <std_msgs/msg/bool.hpp>
+#include <sensor_msgs/msg/joy.hpp>
 #include <chrono>
 #include <memory>
+#include <atomic>
+#include <thread>
 
 
 namespace conveyor_feeding_utils
@@ -47,9 +51,19 @@ namespace conveyor_feeding_utils
         /** \brief Best-effort SetBool call to the Isaac vacuum bridge (no-op if absent). */
         void set_isaac_vacuum(bool grip);
 
+        /** \brief Debug step-gate. When debug is enabled (constructor arg, live-toggled via
+            /conveyor_feeding/debug), block until the user clicks 'Next' in the RViz
+            RvizVisualToolsGui panel. The wait is interruptible: toggling debug off frees the
+            run mid-wait with no final click. No-op when debug is disabled. */
+        void maybe_prompt(const std::string& msg);
+
         manipulator_interface::ManipulatorInterface& manipulator_;
-        bool debug_, success_, simulation_;
+        std::atomic<bool> debug_;                 // live-toggled via /conveyor_feeding/debug
+        std::atomic<bool> next_pressed_{false};   // set by RViz 'Next' on /rviz_visual_tools_gui
+        bool success_, simulation_;
         rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr sub_grasp_pose_;
+        rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr debug_sub_;
+        rclcpp::Subscription<sensor_msgs::msg::Joy>::SharedPtr gui_sub_;
         rclcpp::Client<std_srvs::srv::SetBool>::SharedPtr isaac_vacuum_client_;
         geometry_msgs::msg::Pose curr_grasp_pose_;
         // frame_id of the last received grasp pose; empty -> assume the camera frame.

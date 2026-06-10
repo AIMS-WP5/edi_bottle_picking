@@ -10,12 +10,14 @@
 # Usage:
 #   bringup_sim_stack.sh [--model NAME] [--steps N] [--collision-check true|false]
 #                        [--gripper TYPE] [--no-pick] [--no-attach] [--best-grasp]
+#                        [--debug|--no-debug]
 #   bringup_sim_stack.sh down            # Ctrl-C every node and kill the tmux session
 #
 # Examples:
 #   bringup_sim_stack.sh --model 2026_06_xx_model_2 --steps 100      # your new checkpoint
 #   bringup_sim_stack.sh                                             # known-good defaults
 #   bringup_sim_stack.sh --best-grasp                               # use stand-in /best_grasp pub (not Isaac)
+#   bringup_sim_stack.sh --no-debug                                 # run full cycle, no RViz 'Next' clicks
 #   bringup_sim_stack.sh down
 #
 # NB: by default /best_grasp is published by the Isaac OmniGraph (per-bottle grasp poses
@@ -38,6 +40,10 @@ MODEL_NAME="2026_05_25_model_1"
 STEP_COUNT="400"
 COLLISION_CHECK="false"
 GRIPPER_TYPE="vacuum"
+# Debug stepping: true = pause for a 'Next' click in RViz between each pick/insert stage;
+# false = run the full scenario and keep cycling unattended. Toggle live while running with:
+#   ros2 topic pub --once /conveyor_feeding/debug std_msgs/msg/Bool "{data: false}"   (or true)
+DEBUG="true"
 RUN_PICK=1
 ATTACH=1
 # Optional stand-in vision publisher on /best_grasp. Disabled by default: the Isaac
@@ -71,6 +77,8 @@ while [[ $# -gt 0 ]]; do
         --no-pick)          RUN_PICK=0; shift;;
         --no-attach)        ATTACH=0; shift;;
         --best-grasp)       RUN_BESTGRASP=1; shift;;
+        --debug)            DEBUG="true"; shift;;
+        --no-debug)         DEBUG="false"; shift;;
         -h|--help)          awk 'NR>1 && /^#/{sub(/^# ?/,""); print; next} NR>1{exit}' "$0"; exit 0;;
         *) echo "unknown arg: $1 (try --help)" >&2; exit 1;;
     esac
@@ -135,15 +143,27 @@ if (( RUN_BESTGRASP )); then
 fi
 
 if (( RUN_PICK )); then
-    wait_for "/object_point (DP add_pad)" "timeout 5 ros2 topic echo /object_point --once 2>/dev/null | grep -q 'x:'" 60
+    # No goal-topic gate here: conveyor_feeding runs its MoveIt pick and moves to ai_start2
+    # before the DP segment, so /socket_center (published by the Isaac OmniGraph) is live well
+    # before run_dp_segment() reads it. (The old /object_point wait was a stale check -- that
+    # topic was renamed to /socket_center -- so it always burned its full 60 s timeout.)
     echo "== phase 3: pick (conveyor_feeding) =="
-    newwin pick "ros2 launch edi_bottle_picking conveyor_feeding.launch.py use_sim_time:=true"
+    newwin pick "ros2 launch edi_bottle_picking conveyor_feeding.launch.py use_sim_time:=true debug:=$DEBUG"
+    # manipulator_interface::cartesian_goal() has an UNCONDITIONAL world_marker_->prompt() before
+    # executing the cartesian plan (not gated by our debug flag). In no-debug mode, put
+    # rviz_visual_tools into autonomous mode -- the GUI 'Continue' button = buttons[2] on
+    # /rviz_visual_tools_gui -- so that prompt (and any other world_marker_ prompt) auto-proceeds,
+    # without modifying the shared manipulator_interface code. Autonomous latches on first
+    # receipt; publish at 1 Hz so it lands once conveyor_feeding's RemoteControl has subscribed.
+    if [[ "$DEBUG" == "false" ]]; then
+        newwin autocont "ros2 topic pub -r 1 /rviz_visual_tools_gui sensor_msgs/msg/Joy '{buttons: [0,0,1,0,0,0,0,0,0]}'"
+    fi
 fi
 
 echo
 echo "tmux session '$SESSION' is up."
-echo "  model=$MODEL_NAME  steps=$STEP_COUNT  collision_check=$COLLISION_CHECK  gripper=$GRIPPER_TYPE"
-echo "  windows: control moveit velbridge vacbridge dp$( ((RUN_BESTGRASP)) && echo ' bestgrasp')$( ((RUN_PICK)) && echo ' pick')"
+echo "  model=$MODEL_NAME  steps=$STEP_COUNT  collision_check=$COLLISION_CHECK  gripper=$GRIPPER_TYPE  debug=$DEBUG"
+echo "  windows: control moveit velbridge vacbridge dp$( ((RUN_BESTGRASP)) && echo ' bestgrasp')$( ((RUN_PICK)) && echo ' pick')$( ((RUN_PICK)) && [[ $DEBUG == false ]] && echo ' autocont')"
 echo "  logs:    $LOGDIR/<window>.log"
 echo "  navigate: Ctrl-b w (picker) | Ctrl-b <n> | Ctrl-b n / Ctrl-b p"
 echo "  detach:   Ctrl-b d        tear down: $0 down"

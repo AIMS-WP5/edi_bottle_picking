@@ -7,6 +7,7 @@ from launch_ros.parameter_descriptions import ParameterValue
 
 def generate_launch_description():
     use_sim_time = LaunchConfiguration("use_sim_time")
+    debug = LaunchConfiguration("debug")
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -18,6 +19,15 @@ def generate_launch_description():
                         "the facade flips the Isaac drive gains during the DP segment. Leave false "
                         "for the real robot.",
         ),
+        DeclareLaunchArgument(
+            "debug",
+            default_value="true",
+            description="Pause for a 'Next' click in the RViz RvizVisualToolsGui panel between "
+                        "each stage of the pick/insert cycle. true = step manually (default, "
+                        "matches conveyor_feeding_config.yaml); false = run the full scenario and "
+                        "keep cycling unattended. Overrides the YAML 'debug' value. Can also be "
+                        "toggled live: ros2 topic pub /conveyor_feeding/debug std_msgs/msg/Bool.",
+        ),
         # Start the actual move_group node/action server
         Node(
             package="edi_bottle_picking",
@@ -26,6 +36,7 @@ def generate_launch_description():
             parameters=[{
                 # LaunchConfiguration is a string; coerce to the node parameter type.
                 "use_sim_time": ParameterValue(use_sim_time, value_type=bool),
+                "debug": ParameterValue(debug, value_type=bool),
             }],
         ),
     ])

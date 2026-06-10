@@ -17,6 +17,25 @@ ConveyorFeedingUtils::ConveyorFeedingUtils(manipulator_interface::ManipulatorInt
 	control_switcher_ = std::make_unique<edi_bottle_picking::ControlModeSwitcher>(
 		manipulator.node_, is_isaac, default_controller_);
 	isaac_vacuum_client_ = manipulator.node_->create_client<std_srvs::srv::SetBool>("/vacuum_gripper/command");
+
+	// Live debug toggle: std_msgs/Bool on /conveyor_feeding/debug enables/disables the per-stage
+	// 'Next' prompts while the scenario runs (consumed by maybe_prompt).
+	debug_sub_ = manipulator.node_->create_subscription<std_msgs::msg::Bool>(
+		"/conveyor_feeding/debug", 10,
+		[this](const std_msgs::msg::Bool::SharedPtr m) {
+			debug_.store(m->data);
+			RCLCPP_INFO(LOGGER, "debug %s via /conveyor_feeding/debug",
+			            m->data ? "ENABLED (pausing at prompts)" : "DISABLED (free-run)");
+		});
+	// The RViz 'Next' button publishes sensor_msgs/Joy with buttons[1]=1 on /rviz_visual_tools_gui;
+	// watch it so maybe_prompt can step without the (uninterruptible) world_marker_->prompt().
+	gui_sub_ = manipulator.node_->create_subscription<sensor_msgs::msg::Joy>(
+		"/rviz_visual_tools_gui", 10,
+		[this](const sensor_msgs::msg::Joy::SharedPtr m) {
+			if (m->buttons.size() > 1 && m->buttons[1]) {
+				next_pressed_.store(true);
+			}
+		});
 }
 
 ConveyorFeedingUtils::~ConveyorFeedingUtils()
@@ -66,6 +85,38 @@ bool ConveyorFeedingUtils::add_box() {
 	pose.position.z = 0.93;
 	bool success = manipulator_.add_collision_box(pose, "world", coll_obj, 0.40, 0.30, 0.15, 0.015);
 	return success;
+}
+
+void ConveyorFeedingUtils::maybe_prompt(const std::string& msg)
+{
+	// Debug step-gate. With debug on, block until the user clicks 'Next' in the RViz
+	// RvizVisualToolsGui panel (buttons[1] on /rviz_visual_tools_gui). The wait is interruptible:
+	// publishing false on /conveyor_feeding/debug frees the run mid-wait, so a live toggle-off
+	// needs no final click. With debug off it announces the stage ("PROCEEDING TO: ...") and
+	// returns, so the scenario cycles unattended but stays traceable in the log. Polls
+	// wall-clock so it behaves the same regardless of use_sim_time.
+
+	// Call sites phrase msg as "press 'Next' to <action>"; strip the lead-in so the free-run
+	// log reads "PROCEEDING TO: <action>".
+	static const std::string kPrefix = "press 'Next' to ";
+	const std::string action = (msg.rfind(kPrefix, 0) == 0) ? msg.substr(kPrefix.size()) : msg;
+
+	if (!debug_.load()) {
+		RCLCPP_INFO(LOGGER, "PROCEEDING TO: %s", action.c_str());
+		return;
+	}
+	RCLCPP_INFO(LOGGER, "%s  [debug] -- click 'Next' in RViz, or "
+	                    "`ros2 topic pub --once /conveyor_feeding/debug std_msgs/msg/Bool \"{data: false}\"` to free-run",
+	            msg.c_str());
+	next_pressed_.store(false);
+	while (rclcpp::ok() && debug_.load() && !next_pressed_.load()) {
+		std::this_thread::sleep_for(50ms);
+	}
+	if (!debug_.load()) {
+		// Freed by a live debug toggle-off rather than a 'Next' click -> now auto-proceeding.
+		RCLCPP_INFO(LOGGER, "PROCEEDING TO: %s", action.c_str());
+	}
+	next_pressed_.store(false);
 }
 
 geometry_msgs::msg::Pose ConveyorFeedingUtils::get_next_published_pose(std::string topic_name, bool stamped_topic, int timeout_sec)
@@ -164,9 +215,7 @@ geometry_msgs::msg::Pose ConveyorFeedingUtils::check_pose_angle(geometry_msgs::m
 
 bool ConveyorFeedingUtils::run()
 {
-    if(debug_){
-        manipulator_.world_marker_->prompt("press 'Next' to go to position above pickup place");
-    }
+    maybe_prompt("press 'Next' to go to position above pickup place");
     success_ = manipulator_.predefined_pose("wait_slam"); //TODO: make pose nearer the box
     if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
@@ -181,9 +230,7 @@ bool ConveyorFeedingUtils::run()
 		RCLCPP_INFO(LOGGER, "Suction disabled!");
 	}
 
-	if(debug_){
-		manipulator_.world_marker_->prompt("press 'Next' to get object grasp pose");
-	}
+	maybe_prompt("press 'Next' to get object grasp pose");
 	geometry_msgs::msg::Pose grasp_pose = ConveyorFeedingUtils::get_curr_grasp_pose();
 	if (grasp_pose.position.z == 0.0) {
 		RCLCPP_ERROR(LOGGER, "Grasp pose probably incorrect!");
@@ -212,9 +259,7 @@ bool ConveyorFeedingUtils::run()
 
 	std::vector<geometry_msgs::msg::Pose> pick_poses = manipulator_.create_pick_moves_simple(pick_pose);
 
-	if(debug_){
-		manipulator_.world_marker_->prompt("press 'Next' to go above box");
-	}
+	maybe_prompt("press 'Next' to go above box");
 	success_ = manipulator_.predefined_pose("above_box_1");
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
@@ -247,7 +292,7 @@ bool ConveyorFeedingUtils::run()
 	if (!success_) {
 		RCLCPP_ERROR(LOGGER, "Bottle not grasped!");
 		command_vacuum(false);
-		manipulator_.world_marker_->prompt("press 'Next' to move back above box");
+		maybe_prompt("press 'Next' to move back above box");
 		success_ = manipulator_.predefined_pose("above_box_1");
 		return 0;
 	}
@@ -258,36 +303,28 @@ bool ConveyorFeedingUtils::run()
 		return 0;
 	}
 
-	if(debug_){
-		manipulator_.world_marker_->prompt("press 'Next' to move back above box");
-	}
+	maybe_prompt("press 'Next' to move back above box");
 	success_ = manipulator_.predefined_pose("above_box_1");
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
 	}
 
-	if(debug_){
-		manipulator_.world_marker_->prompt("press 'Next' to move to after pickup pose");
-	}
+	maybe_prompt("press 'Next' to move to after pickup pose");
 	success_ = manipulator_.predefined_pose("ai_after_pickup");
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
 	}
 
-	if(debug_){
-		manipulator_.world_marker_->prompt("press 'Next' to move to ai start");
-	}
+	maybe_prompt("press 'Next' to move to ai start");
 	success_ = manipulator_.predefined_pose("ai_start2");
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
 	}
 
-	if(debug_){
-		manipulator_.world_marker_->prompt("press 'Next' to run the DP velocity segment");
-	}
+	maybe_prompt("press 'Next' to run the DP velocity segment");
 	// Switch to velocity control, run the DP model, and switch back once it signals
 	// /dp_exec_done (blocks until done or timeout).
 	auto dp_result = control_switcher_->run_dp_segment();
@@ -303,9 +340,7 @@ bool ConveyorFeedingUtils::run()
 	// moves away. Previously conveyor_feeding never released after the DP segment, so the
 	// bottle was only dropped at the start of the next iteration (after returning to the
 	// ready poses) -- it stayed attached through ai_start2/ai_after_pickup.
-	if(debug_){
-		manipulator_.world_marker_->prompt("press 'Next' to release the inserted bottle");
-	}
+	maybe_prompt("press 'Next' to release the inserted bottle");
 	success_ = command_vacuum(false);
 	if (!success_) {
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
@@ -314,17 +349,13 @@ bool ConveyorFeedingUtils::run()
 		RCLCPP_INFO(LOGGER, "Suction disabled (bottle released)!");
 	}
 
-	if(debug_){
-		manipulator_.world_marker_->prompt("press 'Next' to move back");
-	}
+	maybe_prompt("press 'Next' to move back");
 	success_ = manipulator_.predefined_pose("ai_start2");
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
 	}
-	if(debug_){
-		manipulator_.world_marker_->prompt("press 'Next' to move back");
-	}
+	maybe_prompt("press 'Next' to move back");
 	success_ = manipulator_.predefined_pose("ai_after_pickup");
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");

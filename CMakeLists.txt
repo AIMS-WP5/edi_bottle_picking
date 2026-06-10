@@ -17,6 +17,8 @@ find_package(ur_msgs REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(controller_manager_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
+find_package(std_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
 
 add_executable(edi_bottle_picking src/edi_bottle_picking.cpp
 				   src/edi_bottle_picking_utils.cpp)
@@ -106,6 +108,8 @@ ament_target_dependencies(
   yaml-cpp
   controller_manager_msgs
   std_srvs
+  std_msgs
+  sensor_msgs
 )
 
 install(
