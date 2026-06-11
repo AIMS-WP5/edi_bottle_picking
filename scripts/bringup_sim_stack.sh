@@ -9,8 +9,8 @@
 #
 # Usage:
 #   bringup_sim_stack.sh [--model NAME] [--steps N] [--collision-check true|false]
-#                        [--gripper TYPE] [--no-pick] [--no-attach] [--best-grasp]
-#                        [--debug|--no-debug]
+#                        [--max-velocity RAD_S] [--gripper TYPE] [--no-pick] [--no-attach]
+#                        [--best-grasp] [--debug|--no-debug]
 #   bringup_sim_stack.sh down            # Ctrl-C every node and kill the tmux session
 #
 # Examples:
@@ -39,6 +39,10 @@ LOGDIR="/tmp/edi_sim_logs"
 MODEL_NAME="2026_05_25_model_1"
 STEP_COUNT="400"
 COLLISION_CHECK="false"
+# Collision filter's max joint velocity (rad/s); restates the node default 3.0. Set low
+# (e.g. 0.01) to force the velocity clamp to engage -- useful for demoing that over-limit
+# commands are clamped (not aborted). Only meaningful with --collision-check true.
+MAX_VELOCITY="3.0"
 GRIPPER_TYPE="vacuum"
 # Debug stepping: true = pause for a 'Next' click in RViz between each pick/insert stage;
 # false = run the full scenario and keep cycling unattended. Toggle live while running with:
@@ -73,6 +77,7 @@ while [[ $# -gt 0 ]]; do
         -m|--model)         MODEL_NAME="$2"; shift 2;;
         -s|--steps)         STEP_COUNT="$2"; shift 2;;
         --collision-check)  COLLISION_CHECK="$2"; shift 2;;
+        --max-velocity)     MAX_VELOCITY="$2"; shift 2;;
         --gripper)          GRIPPER_TYPE="$2"; shift 2;;
         --no-pick)          RUN_PICK=0; shift;;
         --no-attach)        ATTACH=0; shift;;
@@ -135,7 +140,7 @@ wait_for "controllers" "timeout 6 ros2 control list_controllers 2>/dev/null | gr
 wait_for "move_group"  "ros2 node list 2>/dev/null | grep -q /move_group" 90
 
 echo "== phase 2: DP node ($MODEL_NAME, steps=$STEP_COUNT)$( ((RUN_BESTGRASP)) && echo ' + grasp stand-in') =="
-newwin dp        "ros2 launch diff_physics launch.yaml model_run:=true model_name:=$MODEL_NAME step_count:=$STEP_COUNT collision_check:=$COLLISION_CHECK use_sim_time:=true"
+newwin dp        "ros2 launch diff_physics launch.yaml model_run:=true model_name:=$MODEL_NAME step_count:=$STEP_COUNT collision_check:=$COLLISION_CHECK max_velocity:=$MAX_VELOCITY use_sim_time:=true"
 # /best_grasp is normally published by the Isaac OmniGraph (per-bottle grasp poses); the
 # stand-in below would be a SECOND publisher on the same topic, so it's opt-in (--best-grasp).
 if (( RUN_BESTGRASP )); then
@@ -162,7 +167,7 @@ fi
 
 echo
 echo "tmux session '$SESSION' is up."
-echo "  model=$MODEL_NAME  steps=$STEP_COUNT  collision_check=$COLLISION_CHECK  gripper=$GRIPPER_TYPE  debug=$DEBUG"
+echo "  model=$MODEL_NAME  steps=$STEP_COUNT  collision_check=$COLLISION_CHECK  max_velocity=$MAX_VELOCITY  gripper=$GRIPPER_TYPE  debug=$DEBUG"
 echo "  windows: control moveit velbridge vacbridge dp$( ((RUN_BESTGRASP)) && echo ' bestgrasp')$( ((RUN_PICK)) && echo ' pick')$( ((RUN_PICK)) && [[ $DEBUG == false ]] && echo ' autocont')"
 echo "  logs:    $LOGDIR/<window>.log"
 echo "  navigate: Ctrl-b w (picker) | Ctrl-b <n> | Ctrl-b n / Ctrl-b p"
