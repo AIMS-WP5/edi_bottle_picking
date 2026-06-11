@@ -104,8 +104,12 @@ bool ControlModeSwitcher::switch_controllers(const std::string & activate,
                                              const std::string & deactivate)
 {
     // Use a short-lived node so we can spin_until_future_complete without contending with
-    // the executor that is already spinning node_ on another thread.
-    auto tmp_node = std::make_shared<rclcpp::Node>("tmp_controller_switch_node");
+    // the executor that is already spinning node_ on another thread. Inherit the parent's
+    // clock source (sim time off Isaac's /clock when use_sim_time) for consistency.
+    rclcpp::NodeOptions sim_opts;
+    sim_opts.parameter_overrides({
+        rclcpp::Parameter("use_sim_time", node_->get_parameter("use_sim_time").as_bool())});
+    auto tmp_node = std::make_shared<rclcpp::Node>("tmp_controller_switch_node", sim_opts);
     auto client = tmp_node->create_client<controller_manager_msgs::srv::SwitchController>(
         "/controller_manager/switch_controller");
 

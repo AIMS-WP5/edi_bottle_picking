@@ -121,7 +121,12 @@ void ConveyorFeedingUtils::maybe_prompt(const std::string& msg)
 
 geometry_msgs::msg::Pose ConveyorFeedingUtils::get_next_published_pose(std::string topic_name, bool stamped_topic, int timeout_sec)
 {
-    auto node = rclcpp::Node::make_shared("tmp_sub_node");
+    // Inherit the parent's clock source (sim time off Isaac's /clock when use_sim_time) so
+    // this short-lived node is consistent with the rest of the stack.
+    rclcpp::NodeOptions sim_opts;
+    sim_opts.parameter_overrides({
+        rclcpp::Parameter("use_sim_time", manipulator_.node_->get_parameter("use_sim_time").as_bool())});
+    auto node = rclcpp::Node::make_shared("tmp_sub_node", sim_opts);
     geometry_msgs::msg::Pose received_msg;
     bool received = false;
 
@@ -384,7 +389,11 @@ bool ConveyorFeedingUtils::get_grasped_status(int timeout_sec)
 		return true;
 	}
 
-	auto node = rclcpp::Node::make_shared("tmp_grasp_status_node");
+	// Inherit the parent's clock source for consistency with the rest of the stack.
+	rclcpp::NodeOptions sim_opts;
+	sim_opts.parameter_overrides({
+		rclcpp::Parameter("use_sim_time", manipulator_.node_->get_parameter("use_sim_time").as_bool())});
+	auto node = rclcpp::Node::make_shared("tmp_grasp_status_node", sim_opts);
 	ur_msgs::msg::IOStates received_msg;
 	bool received = false;
     auto callback = [&received_msg, &received](ur_msgs::msg::IOStates msg) {
