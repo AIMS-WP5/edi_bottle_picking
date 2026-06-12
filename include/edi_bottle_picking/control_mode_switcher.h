@@ -52,6 +52,11 @@ public:
      *  collision/limits) or std::nullopt on timeout.  Position control is always
      *  restored, even on timeout or a failed velocity switch.
      *
+     *  \p timeout_sec is measured on the node clock, so it is SIM seconds when
+     *  use_sim_time is set (and wall seconds on the real robot).  This keeps the
+     *  budget aligned with the DP node's own (sim-time-paced) timeline instead of
+     *  tripping spuriously when Isaac runs slower than real time.
+     *
      *  The segment is also bracketed by the can_update_socket handshake: the external
      *  socket/target-coordinate provider is told to freeze (false) before the velocity
      *  switch and released (true) once position control is restored, so the insertion

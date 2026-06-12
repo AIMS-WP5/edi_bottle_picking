@@ -78,16 +78,26 @@ std::optional<bool> ControlModeSwitcher::run_dp_segment(double timeout_sec)
     std::optional<bool> result;
     {
         std::unique_lock<std::mutex> lock(dp_mutex_);
-        bool got = dp_cv_.wait_for(
-            lock, std::chrono::duration<double>(timeout_sec),
-            [this] { return dp_done_received_; });
-        if (got) {
+        // Measure the timeout on the NODE clock (which honors use_sim_time), not the wall
+        // clock. std::condition_variable::wait_for is steady/wall-clock only, so under Isaac
+        // (sim running slower than real time) it tripped spuriously: the DP segment is ~8 s of
+        // SIM time but can take 20+ s of wall time, blowing a 20 s wall budget. With the node
+        // clock, `timeout_sec` is sim seconds, so the budget tracks the DP node's own timeline.
+        // wait_for here is just a bounded sleep between deadline re-checks; dp_done_callback's
+        // notify still wakes us immediately when /dp_exec_done arrives. On the real robot
+        // (use_sim_time:=false) the node clock IS wall time, so behaviour is unchanged there.
+        const rclcpp::Time deadline = node_->now() + rclcpp::Duration::from_seconds(timeout_sec);
+        while (rclcpp::ok() && !dp_done_received_ && node_->now() < deadline) {
+            dp_cv_.wait_for(lock, std::chrono::milliseconds(100));
+        }
+        if (dp_done_received_) {
             result = dp_done_value_;
         }
     }
 
     if (!result.has_value()) {
-        RCLCPP_WARN(LOGGER, "DP segment: timed out waiting for /dp_exec_done");
+        RCLCPP_WARN(LOGGER, "DP segment: timed out waiting for /dp_exec_done (%.1fs sim-time budget)",
+                    timeout_sec);
     } else {
         RCLCPP_INFO(LOGGER, "DP segment: /dp_exec_done = %s", *result ? "success" : "failure");
     }
