@@ -10,7 +10,7 @@
 # Usage:
 #   bringup_sim_stack.sh [--model NAME] [--steps N] [--collision-check true|false]
 #                        [--max-velocity RAD_S] [--gripper TYPE] [--no-pick] [--no-attach]
-#                        [--best-grasp] [--debug|--no-debug]
+#                        [--best-grasp] [--debug|--no-debug] [--bottle-picking-iterations N]
 #   bringup_sim_stack.sh down            # Ctrl-C every node and kill the tmux session
 #
 # Examples:
@@ -18,6 +18,7 @@
 #   bringup_sim_stack.sh                                             # known-good defaults
 #   bringup_sim_stack.sh --best-grasp                               # use stand-in /best_grasp pub (not Isaac)
 #   bringup_sim_stack.sh --no-debug                                 # run full cycle, no RViz 'Next' clicks
+#   bringup_sim_stack.sh --bottle-picking-iterations 5             # run only 5 pick/insert cycles
 #   bringup_sim_stack.sh down
 #
 # NB: by default /best_grasp is published by the Isaac OmniGraph (per-bottle grasp poses
@@ -48,6 +49,9 @@ GRIPPER_TYPE="vacuum"
 # false = run the full scenario and keep cycling unattended. Toggle live while running with:
 #   ros2 topic pub --once /conveyor_feeding/debug std_msgs/msg/Bool "{data: false}"   (or true)
 DEBUG="true"
+# Number of pick/insert cycles conveyor_feeding runs. -1 (default) keeps the value from
+# conveyor_feeding_config.yaml ('iterations', currently 50); any value >= 0 overrides it.
+BOTTLE_PICKING_ITERATIONS="-1"
 RUN_PICK=1
 ATTACH=1
 # Optional stand-in vision publisher on /best_grasp. Disabled by default: the Isaac
@@ -84,6 +88,7 @@ while [[ $# -gt 0 ]]; do
         --best-grasp)       RUN_BESTGRASP=1; shift;;
         --debug)            DEBUG="true"; shift;;
         --no-debug)         DEBUG="false"; shift;;
+        --bottle-picking-iterations) BOTTLE_PICKING_ITERATIONS="$2"; shift 2;;
         -h|--help)          awk 'NR>1 && /^#/{sub(/^# ?/,""); print; next} NR>1{exit}' "$0"; exit 0;;
         *) echo "unknown arg: $1 (try --help)" >&2; exit 1;;
     esac
@@ -153,7 +158,7 @@ if (( RUN_PICK )); then
     # before run_dp_segment() reads it. (The old /object_point wait was a stale check -- that
     # topic was renamed to /socket_center -- so it always burned its full 60 s timeout.)
     echo "== phase 3: pick (conveyor_feeding) =="
-    newwin pick "ros2 launch edi_bottle_picking conveyor_feeding.launch.py use_sim_time:=true debug:=$DEBUG"
+    newwin pick "ros2 launch edi_bottle_picking conveyor_feeding.launch.py use_sim_time:=true debug:=$DEBUG iterations:=$BOTTLE_PICKING_ITERATIONS"
     # manipulator_interface::cartesian_goal() has an UNCONDITIONAL world_marker_->prompt() before
     # executing the cartesian plan (not gated by our debug flag). In no-debug mode, put
     # rviz_visual_tools into autonomous mode -- the GUI 'Continue' button = buttons[2] on
@@ -166,8 +171,9 @@ if (( RUN_PICK )); then
 fi
 
 echo
+if [[ "$BOTTLE_PICKING_ITERATIONS" == "-1" ]]; then ITERS_DISP="config default"; else ITERS_DISP="$BOTTLE_PICKING_ITERATIONS"; fi
 echo "tmux session '$SESSION' is up."
-echo "  model=$MODEL_NAME  steps=$STEP_COUNT  collision_check=$COLLISION_CHECK  max_velocity=$MAX_VELOCITY  gripper=$GRIPPER_TYPE  debug=$DEBUG"
+echo "  model=$MODEL_NAME  steps=$STEP_COUNT  collision_check=$COLLISION_CHECK  max_velocity=$MAX_VELOCITY  gripper=$GRIPPER_TYPE  debug=$DEBUG  bottle_picking_iterations=$ITERS_DISP"
 echo "  windows: control moveit velbridge vacbridge dp$( ((RUN_BESTGRASP)) && echo ' bestgrasp')$( ((RUN_PICK)) && echo ' pick')$( ((RUN_PICK)) && [[ $DEBUG == false ]] && echo ' autocont')"
 echo "  logs:    $LOGDIR/<window>.log"
 echo "  navigate: Ctrl-b w (picker) | Ctrl-b <n> | Ctrl-b n / Ctrl-b p"

@@ -8,6 +8,7 @@ from launch_ros.parameter_descriptions import ParameterValue
 def generate_launch_description():
     use_sim_time = LaunchConfiguration("use_sim_time")
     debug = LaunchConfiguration("debug")
+    iterations = LaunchConfiguration("iterations")
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -28,6 +29,13 @@ def generate_launch_description():
                         "keep cycling unattended. Overrides the YAML 'debug' value. Can also be "
                         "toggled live: ros2 topic pub /conveyor_feeding/debug std_msgs/msg/Bool.",
         ),
+        DeclareLaunchArgument(
+            "iterations",
+            default_value="-1",
+            description="Number of full pick/insert cycles to run. -1 (default) keeps the value "
+                        "from conveyor_feeding_config.yaml ('iterations'); any value >= 0 overrides "
+                        "it. e.g. iterations:=5 for a short test run.",
+        ),
         # Start the actual move_group node/action server
         Node(
             package="edi_bottle_picking",
@@ -37,6 +45,7 @@ def generate_launch_description():
                 # LaunchConfiguration is a string; coerce to the node parameter type.
                 "use_sim_time": ParameterValue(use_sim_time, value_type=bool),
                 "debug": ParameterValue(debug, value_type=bool),
+                "iterations": ParameterValue(iterations, value_type=int),
             }],
         ),
     ])

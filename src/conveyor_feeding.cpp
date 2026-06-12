@@ -57,6 +57,19 @@ int main(int argc, char ** argv)
     application.node_->declare_parameter("debug", debug);
   }
   debug = application.node_->get_parameter("debug").as_bool();
+
+  // Same pattern as `debug`: the YAML `iterations` is the default; an `iterations` ROS param
+  // (set by conveyor_feeding.launch.py) overrides it. The launch sentinel -1 means "keep the
+  // YAML value", so only a launch override of >= 0 changes total_iterations.
+  if (!application.node_->has_parameter("iterations")) {
+    application.node_->declare_parameter("iterations", total_iterations);
+  }
+  int iterations_param = static_cast<int>(application.node_->get_parameter("iterations").as_int());
+  if (iterations_param >= 0) {
+    total_iterations = iterations_param;
+  }
+  RCLCPP_INFO(LOGGER, "conveyor_feeding will run %d iteration(s)", total_iterations);
+
   ConveyorFeedingUtils conveyor_feeding_utils(manipulator, grasp_pose_topic, default_controller, debug, is_isaac);
 
   rclcpp::Duration d = rclcpp::Duration::from_seconds(1.0);
@@ -82,6 +95,11 @@ int main(int argc, char ** argv)
     success = conveyor_feeding_utils.run();
     if (success){
         RCLCPP_INFO(LOGGER, "Iteration %d successful", iter_count+1);
+    } else {
+        // The loop always advances iter_count, even on a failed cycle, so surface every
+        // such failure with a clearly identifiable error line tied to the iteration number.
+        RCLCPP_ERROR(LOGGER, "Iteration %d FAILED (see errors above); advancing to next iteration",
+                     iter_count+1);
     }
     iter_count++;
   }

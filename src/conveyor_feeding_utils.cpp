@@ -333,12 +333,17 @@ bool ConveyorFeedingUtils::run()
 	// Switch to velocity control, run the DP model, and switch back once it signals
 	// /dp_exec_done (blocks until done or timeout).
 	auto dp_result = control_switcher_->run_dp_segment();
+	// Record the DP insertion outcome and report it as the iteration result (returned at the
+	// end). A timeout or collision/limits failure is a real error -- log it as such so it is
+	// not masked by the post-DP cleanup moves (release/back-off) succeeding afterwards.
+	bool dp_ok = false;
 	if (!dp_result.has_value()) {
-		RCLCPP_WARN(LOGGER, "DP segment timed out; restored position control");
+		RCLCPP_ERROR(LOGGER, "DP segment timed out; restored position control");
 	} else if (*dp_result) {
 		RCLCPP_INFO(LOGGER, "DP segment completed successfully");
+		dp_ok = true;
 	} else {
-		RCLCPP_WARN(LOGGER, "DP segment reported failure (collision/limits exceeded)");
+		RCLCPP_ERROR(LOGGER, "DP segment reported failure (collision/limits exceeded)");
 	}
 
 	// Release the inserted bottle here, at the insertion point, BEFORE the robot lifts up and
@@ -367,7 +372,9 @@ bool ConveyorFeedingUtils::run()
 		return 0;
 	}
 
-	return true;
+	// The pick + cleanup moves completed; the iteration's success is the DP insertion result,
+	// so a failed/timed-out DP segment is reported (and logged) as a failed iteration.
+	return dp_ok;
 }
 
 geometry_msgs::msg::Pose ConveyorFeedingUtils::get_curr_grasp_pose()
