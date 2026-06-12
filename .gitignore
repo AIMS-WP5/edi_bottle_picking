@@ -1,3 +1,11 @@
 # Python bytecode cache
 __pycache__/
 *.pyc
+
+# DP control-data run artifacts (written by diff_physics/main.py in the DP node's launch
+# cwd, e.g. scripts/ under bringup_sim_stack.sh). Matched at any depth.
+dpcontrol-data-*/
+received.xlsx
+sent.xlsx
+joint_states.xlsx
+combined.xlsx
