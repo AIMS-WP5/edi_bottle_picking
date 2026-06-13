@@ -83,7 +83,12 @@ bool ConveyorFeedingUtils::add_box() {
 	pose.position.x = -0.45;
 	pose.position.y = -0.50;
 	pose.position.z = 0.93;
-	bool success = manipulator_.add_collision_box(pose, "world", coll_obj, 0.40, 0.30, 0.15, 0.015);
+	// X size 0.40 -> 0.42: widen the (sim-only) box 2 cm in X so its walls sit ~1 cm farther
+	// out per side while the bottle row stays put (its pitch is fixed by bottle geometry, not
+	// the box). This gives the end-most bottles enough clearance for the gripper snout to
+	// descend vertically without the snout grazing a wall. Keep in sync with the Isaac scene's
+	// BOX_OUTER (edi_isaacsim/simplified_ur5_scene.py).
+	bool success = manipulator_.add_collision_box(pose, "world", coll_obj, 0.42, 0.30, 0.15, 0.015);
 	return success;
 }
 
