@@ -220,6 +220,15 @@ geometry_msgs::msg::Pose ConveyorFeedingUtils::check_pose_angle(geometry_msgs::m
 
 bool ConveyorFeedingUtils::run()
 {
+	// Clean slate. The grasped-bottle collision object (id "object", added by
+	// add_collision_object_simple and attached to virtual_ee_link) is created every cycle but
+	// run() never detached/removed it, so stale attached bodies accumulated in the planning
+	// scene and after ~23 cycles permanently blocked the pick's Cartesian planning. Detach +
+	// remove any leftover before starting, so every cycle begins clean regardless of how the
+	// previous one ended (success or an early-return failure). No-op when nothing is present.
+	manipulator_.detach_collision_object();
+	manipulator_.remove_collision_object();
+
     maybe_prompt("press 'Next' to go to position above pickup place");
     success_ = manipulator_.predefined_pose("wait_slam"); //TODO: make pose nearer the box
     if(!success_){
@@ -358,6 +367,12 @@ bool ConveyorFeedingUtils::run()
 	} else {
 		RCLCPP_INFO(LOGGER, "Suction disabled (bottle released)!");
 	}
+
+	// The bottle is now released into the socket: detach it from the gripper and remove the
+	// phantom from the planning scene (mirrors manipulator_interface's place flow), so the
+	// move-backs and the next pick plan against a clean scene.
+	manipulator_.detach_collision_object();
+	manipulator_.remove_collision_object();
 
 	maybe_prompt("press 'Next' to move back");
 	success_ = manipulator_.predefined_pose("ai_start2");
