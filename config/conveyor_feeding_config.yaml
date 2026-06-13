@@ -1,4 +1,5 @@
 debug: true
 iterations: 50
+max_pick_attempts: 3   # retries for a failed pick (each failed attempt does a safe retreat first); 1 = no retry
 grasp_pose_topic: "best_grasp"
 default_controller: "joint_trajectory_controller" # scaled_joint_trajectory_controller for real robot

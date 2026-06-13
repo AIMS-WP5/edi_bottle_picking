@@ -8,8 +8,12 @@ namespace conveyor_feeding_utils
 
 const rclcpp::Logger LOGGER = rclcpp::get_logger("conveyor_feeding_utils");
 
-ConveyorFeedingUtils::ConveyorFeedingUtils(manipulator_interface::ManipulatorInterface& manipulator, std::string grasp_pose_topic, std::string default_controller, bool debug, bool is_isaac)
-    : manipulator_(manipulator), debug_(debug), simulation_(is_isaac), default_controller_(default_controller)
+// Vertical lift safe_retreat() uses to extract the tool from the box (walls top at z~1.08)
+// before a joint-space move back to a ready pose.
+static constexpr double SAFE_LIFT_M = 0.20;
+
+ConveyorFeedingUtils::ConveyorFeedingUtils(manipulator_interface::ManipulatorInterface& manipulator, std::string grasp_pose_topic, std::string default_controller, bool debug, bool is_isaac, int max_pick_attempts)
+    : manipulator_(manipulator), debug_(debug), simulation_(is_isaac), max_pick_attempts_(max_pick_attempts), default_controller_(default_controller)
 {
 	sub_grasp_pose_ = manipulator.node_->create_subscription<geometry_msgs::msg::PoseStamped>(
 		grasp_pose_topic, 10, std::bind(&ConveyorFeedingUtils::grasp_pose_callback, this, _1)
@@ -223,7 +227,7 @@ geometry_msgs::msg::Pose ConveyorFeedingUtils::check_pose_angle(geometry_msgs::m
 	return corrected_pose;
 }
 
-bool ConveyorFeedingUtils::run()
+bool ConveyorFeedingUtils::try_pick_bottle()
 {
 	// Clean slate. The grasped-bottle collision object (id "object", added by
 	// add_collision_object_simple and attached to virtual_ee_link) is created every cycle but
@@ -329,10 +333,35 @@ bool ConveyorFeedingUtils::run()
 		return 0;
 	}
 
+	// Bottle grasped and the arm is back above the box: a complete, successful pick.
+	return true;
+}
+
+bool ConveyorFeedingUtils::run()
+{
+	// Pick a bottle, retrying on failure. A failed attempt can leave the arm down in the box;
+	// safe_retreat() lifts it back out to a plannable ready pose so the retry -- and the next
+	// iteration -- start clean. Without this, one failed pick wedges the arm in the box and every
+	// following iteration fails at its first move (wait_slam can't be planned out of the box).
+	bool grasped = false;
+	for (int attempt = 1; attempt <= max_pick_attempts_ && rclcpp::ok(); ++attempt) {
+		if (try_pick_bottle()) { grasped = true; break; }
+		RCLCPP_WARN(LOGGER, "Pick attempt %d/%d failed; retreating to safety and retrying",
+		            attempt, max_pick_attempts_);
+		safe_retreat();
+	}
+	if (!grasped) {
+		safe_retreat();
+		RCLCPP_ERROR(LOGGER, "Pick failed after %d attempt(s); advancing to next iteration",
+		             max_pick_attempts_);
+		return false;
+	}
+
 	maybe_prompt("press 'Next' to move to after pickup pose");
 	success_ = manipulator_.predefined_pose("ai_after_pickup");
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
+		safe_retreat();
 		return 0;
 	}
 
@@ -340,6 +369,7 @@ bool ConveyorFeedingUtils::run()
 	success_ = manipulator_.predefined_pose("ai_start2");
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
+		safe_retreat();
 		return 0;
 	}
 
@@ -368,6 +398,7 @@ bool ConveyorFeedingUtils::run()
 	success_ = command_vacuum(false);
 	if (!success_) {
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
+		safe_retreat();
 		return 0;
 	} else {
 		RCLCPP_INFO(LOGGER, "Suction disabled (bottle released)!");
@@ -383,18 +414,46 @@ bool ConveyorFeedingUtils::run()
 	success_ = manipulator_.predefined_pose("ai_start2");
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
+		safe_retreat();
 		return 0;
 	}
 	maybe_prompt("press 'Next' to move back");
 	success_ = manipulator_.predefined_pose("ai_after_pickup");
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
+		safe_retreat();
 		return 0;
 	}
 
 	// The pick + cleanup moves completed; the iteration's success is the DP insertion result,
 	// so a failed/timed-out DP segment is reported (and logged) as a failed iteration.
 	return dp_ok;
+}
+
+bool ConveyorFeedingUtils::safe_retreat()
+{
+	// Best-effort recovery to a safe, plannable pose after a failed pick/place. Release and
+	// detach any partial grasp, LIFT STRAIGHT UP out of the box (a vertical Cartesian move -- a
+	// joint-space plan from inside the box would arc the tool out through a wall and fail), then
+	// return to a ready pose. Each step is best-effort: log and continue, so we get as close to
+	// safe as possible even if one step fails.
+	command_vacuum(false);
+	manipulator_.detach_collision_object();
+	manipulator_.remove_collision_object();
+
+	if (!manipulator_.lift_z(SAFE_LIFT_M)) {
+		RCLCPP_WARN(LOGGER, "safe_retreat: vertical lift failed; trying a ready pose anyway");
+	}
+
+	if (manipulator_.predefined_pose("above_box_1")) {
+		return true;
+	}
+	RCLCPP_WARN(LOGGER, "safe_retreat: could not reach 'above_box_1'; falling back to 'wait_slam'");
+	if (manipulator_.predefined_pose("wait_slam")) {
+		return true;
+	}
+	RCLCPP_ERROR(LOGGER, "safe_retreat: FAILED to reach a safe ready pose");
+	return false;
 }
 
 geometry_msgs::msg::Pose ConveyorFeedingUtils::get_curr_grasp_pose()

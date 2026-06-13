@@ -17,6 +17,7 @@ bool debug = config["debug"].as<bool>();
 int total_iterations = config["iterations"].as<int>();
 std::string grasp_pose_topic = config["grasp_pose_topic"].as<std::string>();
 std::string default_controller = config["default_controller"].as<std::string>();
+int max_pick_attempts = config["max_pick_attempts"] ? config["max_pick_attempts"].as<int>() : 3;
 
 int main(int argc, char ** argv)
 {
@@ -70,7 +71,16 @@ int main(int argc, char ** argv)
   }
   RCLCPP_INFO(LOGGER, "conveyor_feeding will run %d iteration(s)", total_iterations);
 
-  ConveyorFeedingUtils conveyor_feeding_utils(manipulator, grasp_pose_topic, default_controller, debug, is_isaac);
+  // Same pattern: YAML `max_pick_attempts` is the default; a ROS param overrides it. Bounds the
+  // pick retries on a failed grasp (each failed attempt does a safe retreat first). 1 = no retry.
+  if (!application.node_->has_parameter("max_pick_attempts")) {
+    application.node_->declare_parameter("max_pick_attempts", max_pick_attempts);
+  }
+  max_pick_attempts = static_cast<int>(application.node_->get_parameter("max_pick_attempts").as_int());
+  if (max_pick_attempts < 1) max_pick_attempts = 1;
+  RCLCPP_INFO(LOGGER, "conveyor_feeding: max_pick_attempts = %d", max_pick_attempts);
+
+  ConveyorFeedingUtils conveyor_feeding_utils(manipulator, grasp_pose_topic, default_controller, debug, is_isaac, max_pick_attempts);
 
   rclcpp::Duration d = rclcpp::Duration::from_seconds(1.0);
   if(!application.gripper_action_client_ptr->wait_for_action_server(d.to_chrono<std::chrono::duration<double>>())) {

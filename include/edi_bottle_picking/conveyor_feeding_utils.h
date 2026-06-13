@@ -20,7 +20,7 @@ namespace conveyor_feeding_utils
 	class ConveyorFeedingUtils
     {
     public:
-    ConveyorFeedingUtils(manipulator_interface::ManipulatorInterface& manipulator, std::string grasp_pose_topic, std::string default_controller, bool debug = false, bool is_isaac = false); // Constructor
+    ConveyorFeedingUtils(manipulator_interface::ManipulatorInterface& manipulator, std::string grasp_pose_topic, std::string default_controller, bool debug = false, bool is_isaac = false, int max_pick_attempts = 3); // Constructor
 
     ~ConveyorFeedingUtils(); // Destructor
 
@@ -57,10 +57,23 @@ namespace conveyor_feeding_utils
             run mid-wait with no final click. No-op when debug is disabled. */
         void maybe_prompt(const std::string& msg);
 
+        /** \brief One full pick attempt: go to wait_slam, read the grasp pose, approach,
+            descend, grip, confirm via get_grasped_status, and retreat to above_box_1. Returns
+            true only if the bottle is grasped and the arm is back at above_box_1. */
+        bool try_pick_bottle();
+
+        /** \brief Best-effort recovery to a safe, plannable pose after a failed pick: release
+            and detach any partial grasp, lift the tool straight up out of the box (a vertical
+            Cartesian move -- a joint-space plan would arc out through a wall and fail), then
+            return to above_box_1 (falling back to wait_slam). Prevents one failed pick from
+            wedging the robot inside the box and bricking all following iterations. */
+        bool safe_retreat();
+
         manipulator_interface::ManipulatorInterface& manipulator_;
         std::atomic<bool> debug_;                 // live-toggled via /conveyor_feeding/debug
         std::atomic<bool> next_pressed_{false};   // set by RViz 'Next' on /rviz_visual_tools_gui
         bool success_, simulation_;
+        int max_pick_attempts_;                   // bounded pick retries (config: max_pick_attempts)
         rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr sub_grasp_pose_;
         rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr debug_sub_;
         rclcpp::Subscription<sensor_msgs::msg::Joy>::SharedPtr gui_sub_;
