@@ -18,6 +18,15 @@ int total_iterations = config["iterations"].as<int>();
 std::string grasp_pose_topic = config["grasp_pose_topic"].as<std::string>();
 std::string default_controller = config["default_controller"].as<std::string>();
 int max_pick_attempts = config["max_pick_attempts"] ? config["max_pick_attempts"].as<int>() : 3;
+std::string insertion_mode = config["insertion_mode"] ? config["insertion_mode"].as<std::string>() : "dp";
+std::string socket_pose_topic = config["socket_pose_topic"] ? config["socket_pose_topic"].as<std::string>() : "socket_center";
+std::vector<double> moveit_insert_offset = config["moveit_insert_offset_xyz"]
+    ? config["moveit_insert_offset_xyz"].as<std::vector<double>>() : std::vector<double>{0.0, 0.0, 0.0};
+double moveit_insert_above_dz = config["moveit_insert_above_dz"] ? config["moveit_insert_above_dz"].as<double>() : 0.10;
+std::vector<double> moveit_insert_orientation = config["moveit_insert_orientation_xyzw"]
+    ? config["moveit_insert_orientation_xyzw"].as<std::vector<double>>() : std::vector<double>{0.515881, 0.483598, -0.515881, -0.483598};
+bool moveit_insert_descent_collision_check = config["moveit_insert_descent_collision_check"]
+    ? config["moveit_insert_descent_collision_check"].as<bool>() : true;
 
 int main(int argc, char ** argv)
 {
@@ -80,7 +89,29 @@ int main(int argc, char ** argv)
   if (max_pick_attempts < 1) max_pick_attempts = 1;
   RCLCPP_INFO(LOGGER, "conveyor_feeding: max_pick_attempts = %d", max_pick_attempts);
 
-  ConveyorFeedingUtils conveyor_feeding_utils(manipulator, grasp_pose_topic, default_controller, debug, is_isaac, max_pick_attempts);
+  // Insertion strategy: YAML default, overridable by the launch-provided `insertion_mode`
+  // param (same pattern as `debug`). "dp" = NN velocity segment; "moveit" = comparison test.
+  if (!application.node_->has_parameter("insertion_mode")) {
+    application.node_->declare_parameter("insertion_mode", insertion_mode);
+  }
+  insertion_mode = application.node_->get_parameter("insertion_mode").as_string();
+  RCLCPP_INFO(LOGGER, "conveyor_feeding: insertion_mode = %s", insertion_mode.c_str());
+
+  // socket_pose_topic + MoveIt-mode geometry are YAML-only (no launch override needed).
+  std::array<double, 3> insert_offset = {0.0, 0.0, 0.0};
+  for (size_t i = 0; i < 3 && i < moveit_insert_offset.size(); ++i) insert_offset[i] = moveit_insert_offset[i];
+  std::array<double, 4> insert_orientation = {0.515881, 0.483598, -0.515881, -0.483598};
+  for (size_t i = 0; i < 4 && i < moveit_insert_orientation.size(); ++i) insert_orientation[i] = moveit_insert_orientation[i];
+  if (insertion_mode == "moveit") {
+    RCLCPP_INFO(LOGGER, "conveyor_feeding: moveit insert offset=[%.4f, %.4f, %.4f] above_dz=%.3f orient(xyzw)=[%.4f, %.4f, %.4f, %.4f] descent_collision_check=%s socket_topic=%s",
+                insert_offset[0], insert_offset[1], insert_offset[2], moveit_insert_above_dz,
+                insert_orientation[0], insert_orientation[1], insert_orientation[2], insert_orientation[3],
+                moveit_insert_descent_collision_check ? "true" : "false", socket_pose_topic.c_str());
+  }
+
+  ConveyorFeedingUtils conveyor_feeding_utils(manipulator, grasp_pose_topic, default_controller, debug, is_isaac, max_pick_attempts,
+                                              insertion_mode, socket_pose_topic, insert_offset, moveit_insert_above_dz, insert_orientation,
+                                              moveit_insert_descent_collision_check);
 
   rclcpp::Duration d = rclcpp::Duration::from_seconds(1.0);
   if(!application.gripper_action_client_ptr->wait_for_action_server(d.to_chrono<std::chrono::duration<double>>())) {

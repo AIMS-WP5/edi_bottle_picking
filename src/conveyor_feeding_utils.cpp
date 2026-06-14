@@ -12,15 +12,25 @@ const rclcpp::Logger LOGGER = rclcpp::get_logger("conveyor_feeding_utils");
 // before a joint-space move back to a ready pose.
 static constexpr double SAFE_LIFT_M = 0.20;
 
-ConveyorFeedingUtils::ConveyorFeedingUtils(manipulator_interface::ManipulatorInterface& manipulator, std::string grasp_pose_topic, std::string default_controller, bool debug, bool is_isaac, int max_pick_attempts)
-    : manipulator_(manipulator), debug_(debug), simulation_(is_isaac), max_pick_attempts_(max_pick_attempts), default_controller_(default_controller)
+ConveyorFeedingUtils::ConveyorFeedingUtils(manipulator_interface::ManipulatorInterface& manipulator, std::string grasp_pose_topic, std::string default_controller, bool debug, bool is_isaac, int max_pick_attempts,
+    std::string insertion_mode, std::string socket_pose_topic, std::array<double, 3> moveit_insert_offset, double moveit_insert_above_dz,
+    std::array<double, 4> moveit_insert_orientation, bool moveit_insert_descent_collision_check)
+    : manipulator_(manipulator), debug_(debug), simulation_(is_isaac), max_pick_attempts_(max_pick_attempts), default_controller_(default_controller),
+      insertion_mode_(insertion_mode), socket_pose_topic_(socket_pose_topic), moveit_insert_offset_(moveit_insert_offset), moveit_insert_above_dz_(moveit_insert_above_dz),
+      moveit_insert_orientation_(moveit_insert_orientation), moveit_insert_descent_collision_check_(moveit_insert_descent_collision_check)
 {
 	sub_grasp_pose_ = manipulator.node_->create_subscription<geometry_msgs::msg::PoseStamped>(
 		grasp_pose_topic, 10, std::bind(&ConveyorFeedingUtils::grasp_pose_callback, this, _1)
 	);
+	// Continuously latch the insertion target for the MoveIt comparison segment. Created here
+	// (main thread) so run_moveit_insert_segment never creates a subscription mid-run.
+	sub_socket_pose_ = manipulator.node_->create_subscription<geometry_msgs::msg::PoseStamped>(
+		socket_pose_topic_, 10, std::bind(&ConveyorFeedingUtils::socket_pose_callback, this, _1)
+	);
 	control_switcher_ = std::make_unique<edi_bottle_picking::ControlModeSwitcher>(
 		manipulator.node_, is_isaac, default_controller_);
 	isaac_vacuum_client_ = manipulator.node_->create_client<std_srvs::srv::SetBool>("/vacuum_gripper/command");
+	ik_client_ = manipulator.node_->create_client<moveit_msgs::srv::GetPositionIK>("/compute_ik");
 
 	// Live debug toggle: std_msgs/Bool on /conveyor_feeding/debug enables/disables the per-stage
 	// 'Next' prompts while the scenario runs (consumed by maybe_prompt).
@@ -373,21 +383,32 @@ bool ConveyorFeedingUtils::run()
 		return 0;
 	}
 
-	maybe_prompt("press 'Next' to run the DP velocity segment");
-	// Switch to velocity control, run the DP model, and switch back once it signals
-	// /dp_exec_done (blocks until done or timeout).
-	auto dp_result = control_switcher_->run_dp_segment();
-	// Record the DP insertion outcome and report it as the iteration result (returned at the
-	// end). A timeout or collision/limits failure is a real error -- log it as such so it is
-	// not masked by the post-DP cleanup moves (release/back-off) succeeding afterwards.
+	// Insertion segment: either the NN velocity-control DP segment (default) or the MoveIt
+	// comparison segment (above-socket move + Cartesian descent). Both return the same
+	// std::optional<bool>, so the outcome handling below is shared.
+	const bool moveit_mode = (insertion_mode_ == "moveit");
+	maybe_prompt(moveit_mode ? "press 'Next' to run the MoveIt insertion segment"
+	                         : "press 'Next' to run the DP velocity segment");
+	std::optional<bool> seg_result;
+	if (moveit_mode) {
+		seg_result = run_moveit_insert_segment();
+	} else {
+		// Switch to velocity control, run the DP model, and switch back once it signals
+		// /dp_exec_done (blocks until done or timeout).
+		seg_result = control_switcher_->run_dp_segment();
+	}
+	// Record the insertion outcome and report it as the iteration result (returned at the
+	// end). A timeout/no-target or collision/limits/plan failure is a real error -- log it as
+	// such so it is not masked by the post-insert cleanup moves (release/back-off) succeeding.
+	const char* seg_name = moveit_mode ? "MoveIt insertion segment" : "DP segment";
 	bool dp_ok = false;
-	if (!dp_result.has_value()) {
-		RCLCPP_ERROR(LOGGER, "DP segment timed out; restored position control");
-	} else if (*dp_result) {
-		RCLCPP_INFO(LOGGER, "DP segment completed successfully");
+	if (!seg_result.has_value()) {
+		RCLCPP_ERROR(LOGGER, "%s did not complete (timeout / no socket target); position control retained", seg_name);
+	} else if (*seg_result) {
+		RCLCPP_INFO(LOGGER, "%s completed successfully", seg_name);
 		dp_ok = true;
 	} else {
-		RCLCPP_ERROR(LOGGER, "DP segment reported failure (collision/limits exceeded)");
+		RCLCPP_ERROR(LOGGER, "%s reported failure (collision/limits/plan failure)", seg_name);
 	}
 
 	// Release the inserted bottle here, at the insertion point, BEFORE the robot lifts up and
@@ -456,6 +477,138 @@ bool ConveyorFeedingUtils::safe_retreat()
 	return false;
 }
 
+std::optional<std::vector<double>> ConveyorFeedingUtils::compute_insert_ik(const geometry_msgs::msg::Pose& target)
+{
+	static const std::vector<std::string> arm_joints = {
+		"shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint",
+		"wrist_1_joint", "wrist_2_joint", "wrist_3_joint"};
+	if (!ik_client_->wait_for_service(std::chrono::seconds(2))) {
+		RCLCPP_ERROR(LOGGER, "MoveIt insertion: /compute_ik service not available");
+		return std::nullopt;
+	}
+	auto req = std::make_shared<moveit_msgs::srv::GetPositionIK::Request>();
+	req->ik_request.group_name = "ur_manipulator";
+	req->ik_request.ik_link_name = "virtual_ee_link";
+	req->ik_request.pose_stamped.header.frame_id = "world";
+	req->ik_request.pose_stamped.pose = target;
+	req->ik_request.avoid_collisions = true;
+	// Seed from the current arm config so IK returns the branch nearest it: a short move from
+	// ai_start2, and the natural (non-contorted) config the straight-down descent can continue
+	// from. (Without seeding, a pose target lets the planner pick a twisted branch that cannot
+	// descend, which produced the long round-about move and the failed Cartesian descent.)
+	req->ik_request.robot_state.joint_state.name = arm_joints;
+	req->ik_request.robot_state.joint_state.position = manipulator_.current_joint_values();
+	req->ik_request.timeout.sec = 1;
+
+	auto future = ik_client_->async_send_request(req);
+	// run() executes on the main thread while the executor spins on its own thread, so blocking
+	// here is safe -- the executor delivers the response and fulfils the future.
+	if (future.wait_for(std::chrono::seconds(3)) != std::future_status::ready) {
+		RCLCPP_ERROR(LOGGER, "MoveIt insertion: /compute_ik timed out");
+		return std::nullopt;
+	}
+	auto res = future.get();
+	if (res->error_code.val != res->error_code.SUCCESS) {
+		RCLCPP_ERROR(LOGGER, "MoveIt insertion: /compute_ik failed (error code %d)", res->error_code.val);
+		return std::nullopt;
+	}
+	std::vector<double> joints(arm_joints.size(), 0.0);
+	const auto& sol = res->solution.joint_state;
+	for (size_t k = 0; k < arm_joints.size(); ++k) {
+		for (size_t i = 0; i < sol.name.size(); ++i) {
+			if (sol.name[i] == arm_joints[k]) { joints[k] = sol.position[i]; break; }
+		}
+	}
+	RCLCPP_INFO(LOGGER, "MoveIt insertion: IK -> [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f] (wrist_3=%.1f deg)",
+	            joints[0], joints[1], joints[2], joints[3], joints[4], joints[5], joints[5] * 180.0 / M_PI);
+	return joints;
+}
+
+std::optional<bool> ConveyorFeedingUtils::run_moveit_insert_segment(int socket_timeout_sec)
+{
+	// Comparison insertion using standard MoveIt position-controlled moves instead of the NN
+	// velocity segment. Reuse the can_update_socket freeze/release handshake so the Isaac side
+	// samples the target once and records placement on the release edge -- but do NOT switch
+	// the controller/driver (stay in joint_trajectory_controller / position control) and never
+	// touch the velocity gains. The bottle stays gripped throughout; run() does the vacuum-off
+	// and detach afterwards, exactly as for the DP path.
+	control_switcher_->freeze_socket();
+
+	// Sample the insertion target (socket centre) from the continuously-latched member
+	// subscription (Isaac publishes /socket_center every frame; can_update_socket=false has
+	// frozen its advance, so the value is stable). Wait briefly for the first message; the main
+	// MultiThreadedExecutor services the subscription, so a sleep-poll on the flag suffices.
+	{
+		auto start = std::chrono::steady_clock::now();
+		while (rclcpp::ok() && !socket_received_.load() &&
+		       std::chrono::steady_clock::now() - start < std::chrono::seconds(socket_timeout_sec)) {
+			std::this_thread::sleep_for(50ms);
+		}
+	}
+	if (!socket_received_.load()) {
+		RCLCPP_ERROR(LOGGER, "MoveIt insertion: no socket target on '%s'; aborting segment",
+		             socket_pose_topic_.c_str());
+		control_switcher_->release_socket();
+		return std::nullopt;
+	}
+	geometry_msgs::msg::Pose socket = curr_socket_pose_;
+
+	// Use the FIXED vertical-insertion orientation (config moveit_insert_orientation_xyzw), NOT
+	// the ai_start2 orientation: it holds the gripper horizontal so the bottle hangs straight
+	// down (wrist_3 ~ -176 deg), which keeps the wrist clear of the table on the vertical
+	// Cartesian descent. The MoveIt plan to above_pose handles the ~180 deg wrist flip; the
+	// descent reuses the same orientation so the tool pose is unchanged while descending.
+	geometry_msgs::msg::Pose insert_pose;
+	insert_pose.orientation.x = moveit_insert_orientation_[0];
+	insert_pose.orientation.y = moveit_insert_orientation_[1];
+	insert_pose.orientation.z = moveit_insert_orientation_[2];
+	insert_pose.orientation.w = moveit_insert_orientation_[3];
+	insert_pose.position.x = socket.position.x + moveit_insert_offset_[0];
+	insert_pose.position.y = socket.position.y + moveit_insert_offset_[1];
+	insert_pose.position.z = socket.position.z + moveit_insert_offset_[2];
+
+	geometry_msgs::msg::Pose above_pose = insert_pose;
+	above_pose.position.z += moveit_insert_above_dz_;
+
+	manipulator_.world_marker_->publishAxisLabeled(above_pose, "Insert_above");
+	manipulator_.world_marker_->publishAxisLabeled(insert_pose, "Insert_target");
+	manipulator_.world_marker_->trigger();
+
+	// Move 1: joint-space MoveIt plan to the pose above the socket. Resolve IK ourselves
+	// (seeded from the current config) and plan to that explicit joint target, so the arm
+	// reaches the NATURAL config -- a short move, and the one the vertical descent continues
+	// from -- instead of a contorted branch a pose target might pick.
+	maybe_prompt("press 'Next' to move above the socket");
+	auto above_joints = compute_insert_ik(above_pose);
+	if (!above_joints.has_value()) {
+		RCLCPP_ERROR(LOGGER, "MoveIt insertion: IK for above-socket pose failed");
+		control_switcher_->release_socket();
+		return false;
+	}
+	if (!manipulator_.joint_goal(*above_joints)) {
+		RCLCPP_ERROR(LOGGER, "MoveIt insertion: failed to reach above-socket pose");
+		control_switcher_->release_socket();
+		return false;
+	}
+
+	// Move 2: straight-down Cartesian descent into the socket. Collision checking is
+	// configurable (moveit_insert_descent_collision_check): with it on, MoveIt may abort if the
+	// planning scene's solid table/pad (no socket hole modelled) blocks the descent; turn it off
+	// to match the DP segment, which had no MoveIt collision checking. The descent stays a
+	// fixed-orientation straight line; depth is bounded by moveit_insert_offset_xyz[z].
+	maybe_prompt("press 'Next' to lower the bottle into the socket");
+	if (!manipulator_.cartesian_goal(insert_pose, 50.0, /*avoid_collisions=*/moveit_insert_descent_collision_check_)) {
+		RCLCPP_ERROR(LOGGER, "MoveIt insertion: Cartesian descent into the socket failed");
+		control_switcher_->release_socket();
+		return false;
+	}
+
+	// Segment complete; the bottle is still gripped here, so the Isaac side records placement
+	// accuracy on this can_update_socket release edge (before run() releases the vacuum).
+	control_switcher_->release_socket();
+	return true;
+}
+
 geometry_msgs::msg::Pose ConveyorFeedingUtils::get_curr_grasp_pose()
 {
 	return curr_grasp_pose_;
@@ -465,6 +618,12 @@ void ConveyorFeedingUtils::grasp_pose_callback(const geometry_msgs::msg::PoseSta
 {
 	curr_grasp_pose_ = msg->pose;
 	curr_grasp_frame_ = msg->header.frame_id;
+}
+
+void ConveyorFeedingUtils::socket_pose_callback(const geometry_msgs::msg::PoseStamped::SharedPtr msg)
+{
+	curr_socket_pose_ = msg->pose;
+	socket_received_.store(true);
 }
 
 bool ConveyorFeedingUtils::get_grasped_status(int timeout_sec)

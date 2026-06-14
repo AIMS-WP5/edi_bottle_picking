@@ -9,10 +9,13 @@
 #include <std_srvs/srv/set_bool.hpp>
 #include <std_msgs/msg/bool.hpp>
 #include <sensor_msgs/msg/joy.hpp>
+#include <moveit_msgs/srv/get_position_ik.hpp>
 #include <chrono>
 #include <memory>
 #include <atomic>
 #include <thread>
+#include <optional>
+#include <array>
 
 
 namespace conveyor_feeding_utils
@@ -20,7 +23,11 @@ namespace conveyor_feeding_utils
 	class ConveyorFeedingUtils
     {
     public:
-    ConveyorFeedingUtils(manipulator_interface::ManipulatorInterface& manipulator, std::string grasp_pose_topic, std::string default_controller, bool debug = false, bool is_isaac = false, int max_pick_attempts = 3); // Constructor
+    ConveyorFeedingUtils(manipulator_interface::ManipulatorInterface& manipulator, std::string grasp_pose_topic, std::string default_controller, bool debug = false, bool is_isaac = false, int max_pick_attempts = 3,
+                         std::string insertion_mode = "dp", std::string socket_pose_topic = "socket_center",
+                         std::array<double, 3> moveit_insert_offset = {0.0, 0.0, 0.0}, double moveit_insert_above_dz = 0.10,
+                         std::array<double, 4> moveit_insert_orientation = {0.515881, 0.483598, -0.515881, -0.483598},
+                         bool moveit_insert_descent_collision_check = true); // Constructor
 
     ~ConveyorFeedingUtils(); // Destructor
 
@@ -38,6 +45,7 @@ namespace conveyor_feeding_utils
 
     geometry_msgs::msg::Pose get_curr_grasp_pose();
     void grasp_pose_callback(const geometry_msgs::msg::PoseStamped::SharedPtr msg);
+    void socket_pose_callback(const geometry_msgs::msg::PoseStamped::SharedPtr msg);
 
     bool add_box();
 
@@ -69,19 +77,49 @@ namespace conveyor_feeding_utils
             wedging the robot inside the box and bricking all following iterations. */
         bool safe_retreat();
 
+        /** \brief MoveIt comparison insertion (alternative to ControlModeSwitcher::run_dp_segment).
+            Reuses the can_update_socket freeze/release handshake but does NOT switch the
+            controller/driver (stays in position control): reads socket_center once, plans a
+            joint-space move to a pose above socket_center+offset (pose_goal), then a straight
+            Cartesian descent (cartesian_goal). The bottle stays gripped; run() does the
+            vacuum-off/detach afterwards exactly as for the DP path. Mirrors run_dp_segment's
+            return: true/false = success/failure, std::nullopt = no socket target. */
+        std::optional<bool> run_moveit_insert_segment(int socket_timeout_sec = 5);
+
+        /** \brief Compute an IK solution (via the /compute_ik service) for an EE pose, seeded
+            from the current arm config so the returned branch is the natural one nearest the
+            current pose (a short move, and one the Cartesian descent can continue from).
+            \return the 6 arm joint values, or nullopt if IK/service failed. */
+        std::optional<std::vector<double>> compute_insert_ik(const geometry_msgs::msg::Pose& target);
+
         manipulator_interface::ManipulatorInterface& manipulator_;
         std::atomic<bool> debug_;                 // live-toggled via /conveyor_feeding/debug
         std::atomic<bool> next_pressed_{false};   // set by RViz 'Next' on /rviz_visual_tools_gui
         bool success_, simulation_;
         int max_pick_attempts_;                   // bounded pick retries (config: max_pick_attempts)
         rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr sub_grasp_pose_;
+        // Latest insertion target (socket_center), latched continuously like the grasp pose.
+        // A member subscription (created in the ctor on the main thread) avoids creating a
+        // subscription mid-run from a worker thread, which crashes the MultiThreadedExecutor.
+        rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr sub_socket_pose_;
+        geometry_msgs::msg::Pose curr_socket_pose_;
+        std::atomic<bool> socket_received_{false};
         rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr debug_sub_;
         rclcpp::Subscription<sensor_msgs::msg::Joy>::SharedPtr gui_sub_;
         rclcpp::Client<std_srvs::srv::SetBool>::SharedPtr isaac_vacuum_client_;
+        rclcpp::Client<moveit_msgs::srv::GetPositionIK>::SharedPtr ik_client_;  // /compute_ik (move_group)
         geometry_msgs::msg::Pose curr_grasp_pose_;
         // frame_id of the last received grasp pose; empty -> assume the camera frame.
         std::string curr_grasp_frame_;
         std::string default_controller_;
+        // Insertion strategy: "dp" (NN velocity segment) or "moveit" (comparison: MoveIt
+        // position-controlled above-socket move + Cartesian descent). Selected via config.
+        std::string insertion_mode_;
+        std::string socket_pose_topic_;           // topic carrying the insertion target (socket_center)
+        std::array<double, 3> moveit_insert_offset_;  // EE target = socket_center + this (world XYZ, m)
+        double moveit_insert_above_dz_;           // height above the insert pose for the MoveIt approach (m)
+        std::array<double, 4> moveit_insert_orientation_;  // fixed EE orientation for the insert, [x,y,z,w]
+        bool moveit_insert_descent_collision_check_;       // collision-check the Cartesian descent?
         std::unique_ptr<edi_bottle_picking::ControlModeSwitcher> control_switcher_;
 	};
 

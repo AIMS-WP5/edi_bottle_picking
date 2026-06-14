@@ -9,6 +9,7 @@ def generate_launch_description():
     use_sim_time = LaunchConfiguration("use_sim_time")
     debug = LaunchConfiguration("debug")
     iterations = LaunchConfiguration("iterations")
+    insertion_mode = LaunchConfiguration("insertion_mode")
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -36,6 +37,15 @@ def generate_launch_description():
                         "from conveyor_feeding_config.yaml ('iterations'); any value >= 0 overrides "
                         "it. e.g. iterations:=5 for a short test run.",
         ),
+        DeclareLaunchArgument(
+            "insertion_mode",
+            default_value="dp",
+            description="Insertion strategy for the socket-insert segment. 'dp' (default) = the "
+                        "NN velocity-control segment (ControlModeSwitcher::run_dp_segment); "
+                        "'moveit' = comparison test using a MoveIt-planned move above "
+                        "socket_center+offset then a straight Cartesian descent (no driver switch, "
+                        "no velocity logging). Overrides the YAML 'insertion_mode' value.",
+        ),
         # Start the actual move_group node/action server
         Node(
             package="edi_bottle_picking",
@@ -46,6 +56,7 @@ def generate_launch_description():
                 "use_sim_time": ParameterValue(use_sim_time, value_type=bool),
                 "debug": ParameterValue(debug, value_type=bool),
                 "iterations": ParameterValue(iterations, value_type=int),
+                "insertion_mode": ParameterValue(insertion_mode, value_type=str),
             }],
         ),
     ])

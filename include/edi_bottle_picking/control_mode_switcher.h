@@ -63,6 +63,17 @@ public:
      *  target cannot drift mid-segment ("get socket pos once"). */
     std::optional<bool> run_dp_segment(double timeout_sec = 20.0);
 
+    /** \brief Freeze the external socket/target-coordinate provider (publish
+     *  can_update_socket=false), so the insertion target is sampled once and cannot drift
+     *  while a segment executes. Companion to release_socket(). Used by insertion paths that
+     *  do NOT switch the controller (e.g. the MoveIt comparison segment), so they reuse the
+     *  same handshake as run_dp_segment() without a velocity/gain switch. */
+    void freeze_socket();
+
+    /** \brief Release the external socket/target-coordinate provider (publish
+     *  can_update_socket=true): segment done, the provider may advance to the next target. */
+    void release_socket();
+
 private:
     bool switch_controllers(const std::string & activate, const std::string & deactivate);
     void set_isaac_velocity_mode(bool velocity);   // best-effort SetBool, no-op if absent

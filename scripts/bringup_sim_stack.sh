@@ -11,6 +11,7 @@
 #   bringup_sim_stack.sh [--model NAME] [--steps N] [--collision-check true|false]
 #                        [--max-velocity RAD_S] [--gripper TYPE] [--no-pick] [--no-attach]
 #                        [--best-grasp] [--debug|--no-debug] [--bottle-picking-iterations N]
+#                        [--insertion-mode dp|moveit]
 #   bringup_sim_stack.sh down            # Ctrl-C every node and kill the tmux session
 #
 # Examples:
@@ -19,7 +20,15 @@
 #   bringup_sim_stack.sh --best-grasp                               # use stand-in /best_grasp pub (not Isaac)
 #   bringup_sim_stack.sh --no-debug                                 # run full cycle, no RViz 'Next' clicks
 #   bringup_sim_stack.sh --bottle-picking-iterations 5             # run only 5 pick/insert cycles
+#   bringup_sim_stack.sh --insertion-mode moveit                   # MoveIt comparison insert (no DP node)
 #   bringup_sim_stack.sh down
+#
+# --insertion-mode moveit: run the MoveIt comparison test instead of the DP velocity segment.
+# The DP node is NOT launched (the insertion is MoveIt position-controlled + a Cartesian
+# descent), and conveyor_feeding runs with insertion_mode:=moveit. For a clean comparison,
+# start Isaac with the DP socket bias disabled:
+#   python simplified_ur5_scene.py --omnigraph --pad-adj-x 0 --pad-adj-y 0
+# (this script does NOT launch Isaac -- you start/stop that yourself; see above).
 #
 # NB: by default /best_grasp is published by the Isaac OmniGraph (per-bottle grasp poses
 # from the scene). --best-grasp instead runs the best_grasp_pub.py stand-in; do NOT use
@@ -52,6 +61,10 @@ DEBUG="true"
 # Number of pick/insert cycles conveyor_feeding runs. -1 (default) keeps the value from
 # conveyor_feeding_config.yaml ('iterations', currently 50); any value >= 0 overrides it.
 BOTTLE_PICKING_ITERATIONS="-1"
+# Insertion strategy passed through to conveyor_feeding. "dp" (default) = NN velocity segment;
+# "moveit" = comparison test (MoveIt above-socket move + Cartesian descent). In "moveit" the DP
+# node is skipped and a reminder to start Isaac with --pad-adj-x 0 --pad-adj-y 0 is printed.
+INSERTION_MODE="dp"
 RUN_PICK=1
 ATTACH=1
 # Optional stand-in vision publisher on /best_grasp. Disabled by default: the Isaac
@@ -89,10 +102,16 @@ while [[ $# -gt 0 ]]; do
         --debug)            DEBUG="true"; shift;;
         --no-debug)         DEBUG="false"; shift;;
         --bottle-picking-iterations) BOTTLE_PICKING_ITERATIONS="$2"; shift 2;;
+        --insertion-mode)   INSERTION_MODE="$2"; shift 2;;
         -h|--help)          awk 'NR>1 && /^#/{sub(/^# ?/,""); print; next} NR>1{exit}' "$0"; exit 0;;
         *) echo "unknown arg: $1 (try --help)" >&2; exit 1;;
     esac
 done
+
+case "$INSERTION_MODE" in
+    dp|moveit) ;;
+    *) echo "invalid --insertion-mode '$INSERTION_MODE' (expected: dp | moveit)" >&2; exit 1;;
+esac
 
 command -v tmux >/dev/null || { echo "tmux not installed -> sudo apt install tmux" >&2; exit 1; }
 [[ -f "$ENV_HELPER" ]]  || { echo "missing env helper: $ENV_HELPER" >&2; exit 1; }
@@ -144,8 +163,16 @@ newwin vacbridge "ros2 launch edi_bottle_picking vacuum_gripper_bridge.launch.py
 wait_for "controllers" "timeout 6 ros2 control list_controllers 2>/dev/null | grep -q 'joint_trajectory_controller.*active'" 90
 wait_for "move_group"  "ros2 node list 2>/dev/null | grep -q /move_group" 90
 
-echo "== phase 2: DP node ($MODEL_NAME, steps=$STEP_COUNT)$( ((RUN_BESTGRASP)) && echo ' + grasp stand-in') =="
-newwin dp        "ros2 launch diff_physics launch.yaml model_run:=true model_name:=$MODEL_NAME step_count:=$STEP_COUNT collision_check:=$COLLISION_CHECK max_velocity:=$MAX_VELOCITY use_sim_time:=true"
+# The DP node drives the velocity insertion AND publishes the madara_pad collision mesh into
+# the planning scene. In MoveIt comparison mode it is neither needed (conveyor_feeding reads
+# /socket_center directly from Isaac and inserts via MoveIt) nor wanted (the pad collision
+# would block the Cartesian descent), so skip it.
+if [[ "$INSERTION_MODE" == "moveit" ]]; then
+    echo "== phase 2: DP node SKIPPED (insertion_mode=moveit) =="
+else
+    echo "== phase 2: DP node ($MODEL_NAME, steps=$STEP_COUNT)$( ((RUN_BESTGRASP)) && echo ' + grasp stand-in') =="
+    newwin dp        "ros2 launch diff_physics launch.yaml model_run:=true model_name:=$MODEL_NAME step_count:=$STEP_COUNT collision_check:=$COLLISION_CHECK max_velocity:=$MAX_VELOCITY use_sim_time:=true"
+fi
 # /best_grasp is normally published by the Isaac OmniGraph (per-bottle grasp poses); the
 # stand-in below would be a SECOND publisher on the same topic, so it's opt-in (--best-grasp).
 if (( RUN_BESTGRASP )); then
@@ -157,8 +184,8 @@ if (( RUN_PICK )); then
     # before the DP segment, so /socket_center (published by the Isaac OmniGraph) is live well
     # before run_dp_segment() reads it. (The old /object_point wait was a stale check -- that
     # topic was renamed to /socket_center -- so it always burned its full 60 s timeout.)
-    echo "== phase 3: pick (conveyor_feeding) =="
-    newwin pick "ros2 launch edi_bottle_picking conveyor_feeding.launch.py use_sim_time:=true debug:=$DEBUG iterations:=$BOTTLE_PICKING_ITERATIONS"
+    echo "== phase 3: pick (conveyor_feeding, insertion_mode=$INSERTION_MODE) =="
+    newwin pick "ros2 launch edi_bottle_picking conveyor_feeding.launch.py use_sim_time:=true debug:=$DEBUG iterations:=$BOTTLE_PICKING_ITERATIONS insertion_mode:=$INSERTION_MODE"
     # manipulator_interface::cartesian_goal() has an UNCONDITIONAL world_marker_->prompt() before
     # executing the cartesian plan (not gated by our debug flag). In no-debug mode, put
     # rviz_visual_tools into autonomous mode -- the GUI 'Continue' button = buttons[2] on
@@ -173,8 +200,12 @@ fi
 echo
 if [[ "$BOTTLE_PICKING_ITERATIONS" == "-1" ]]; then ITERS_DISP="config default"; else ITERS_DISP="$BOTTLE_PICKING_ITERATIONS"; fi
 echo "tmux session '$SESSION' is up."
-echo "  model=$MODEL_NAME  steps=$STEP_COUNT  collision_check=$COLLISION_CHECK  max_velocity=$MAX_VELOCITY  gripper=$GRIPPER_TYPE  debug=$DEBUG  bottle_picking_iterations=$ITERS_DISP"
-echo "  windows: control moveit velbridge vacbridge dp$( ((RUN_BESTGRASP)) && echo ' bestgrasp')$( ((RUN_PICK)) && echo ' pick')$( ((RUN_PICK)) && [[ $DEBUG == false ]] && echo ' autocont')"
+echo "  insertion_mode=$INSERTION_MODE  model=$MODEL_NAME  steps=$STEP_COUNT  collision_check=$COLLISION_CHECK  max_velocity=$MAX_VELOCITY  gripper=$GRIPPER_TYPE  debug=$DEBUG  bottle_picking_iterations=$ITERS_DISP"
+echo "  windows: control moveit velbridge vacbridge$( [[ $INSERTION_MODE != moveit ]] && echo ' dp')$( ((RUN_BESTGRASP)) && echo ' bestgrasp')$( ((RUN_PICK)) && echo ' pick')$( ((RUN_PICK)) && [[ $DEBUG == false ]] && echo ' autocont')"
+if [[ "$INSERTION_MODE" == "moveit" ]]; then
+    echo "  NOTE: MoveIt comparison mode -- DP node not launched. For a clean comparison start Isaac with:"
+    echo "        python simplified_ur5_scene.py --omnigraph --pad-adj-x 0 --pad-adj-y 0"
+fi
 echo "  logs:    $LOGDIR/<window>.log"
 echo "  navigate: Ctrl-b w (picker) | Ctrl-b <n> | Ctrl-b n / Ctrl-b p"
 echo "  detach:   Ctrl-b d        tear down: $0 down"

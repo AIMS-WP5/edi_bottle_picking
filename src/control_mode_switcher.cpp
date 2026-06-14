@@ -182,6 +182,16 @@ void ControlModeSwitcher::dp_done_callback(const std_msgs::msg::Bool::SharedPtr 
     dp_cv_.notify_all();
 }
 
+void ControlModeSwitcher::freeze_socket()
+{
+    publish_can_update_socket(false);
+}
+
+void ControlModeSwitcher::release_socket()
+{
+    publish_can_update_socket(true);
+}
+
 void ControlModeSwitcher::publish_can_update_socket(bool can_update)
 {
     auto msg = std_msgs::msg::Bool();

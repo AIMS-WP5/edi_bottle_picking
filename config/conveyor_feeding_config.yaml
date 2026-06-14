@@ -3,3 +3,27 @@ iterations: 50
 max_pick_attempts: 3   # retries for a failed pick (each failed attempt does a safe retreat first); 1 = no retry
 grasp_pose_topic: "best_grasp"
 default_controller: "joint_trajectory_controller" # scaled_joint_trajectory_controller for real robot
+
+# Insertion strategy for the segment that places the bottle into the socket:
+#   "dp"     -> NN velocity-control segment (ControlModeSwitcher::run_dp_segment); default.
+#   "moveit" -> comparison test: a MoveIt-planned move above socket_center+offset, then a
+#               straight Cartesian descent. No driver switch, no sent/received velocity logging.
+# Overridable via the conveyor_feeding.launch.py 'insertion_mode' arg.
+insertion_mode: "dp"
+socket_pose_topic: "socket_center"   # PoseStamped (world frame) carrying the insertion target
+# MoveIt-mode only: EE target = socket_center + this offset (world XYZ, metres), reusing the
+# current (held-bottle) wrist orientation. Calibrate once with Isaac PAD_ADJ_X/Y = 0 so it is
+# pure bottle/gripper geometry (independent of any DP model version). See docs / plan.
+moveit_insert_offset_xyz: [0.015, 0.0, 0.09]
+moveit_insert_above_dz: 0.10          # height above the insert pose for the MoveIt approach (m)
+# Fixed end-effector (virtual_ee_link) orientation for the insertion, world frame, [x,y,z,w].
+# Chosen so the gripper is HORIZONTAL (approach axis = world -X) and the held bottle hangs
+# straight DOWN (wrist_3 ~ -176 deg), so the Cartesian descent is vertical and the wrist
+# clears the table. Derived from move_bottle_to_gripper geometry + wrist_3->virtual_ee_link
+# Rz(180); see docs/plan. The MoveIt plan handles the ~180 deg wrist flip from ai_start2.
+moveit_insert_orientation_xyzw: [0.483598, -0.515881, -0.483598, 0.515881]
+# Collision-check the straight-down Cartesian descent. true = normal MoveIt collision checking
+# (safe; may abort if the planning scene's solid table/pad blocks the bottle reaching socket
+# depth). false = skip checking for the descent (matches the DP segment, which had none). Set
+# false only if collision checking spuriously blocks a legitimate insertion.
+moveit_insert_descent_collision_check: true
