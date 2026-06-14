@@ -299,7 +299,18 @@ bool ConveyorFeedingUtils::try_pick_bottle()
 		return 0;
 	}
 
-	success_ = manipulator_.cartesian_goal(pick_poses[0]);
+	// Reach the approach pose via an IK-seeded joint-space move (seeded from the current
+	// above_box_1 config -> natural branch) instead of a Cartesian move. cartesian_goal uses
+	// jump_threshold=0, which can route the approach (a translate + re-orient-to-vertical over an
+	// edge bottle) through a contorted, near-singular branch the controller then fails to track
+	// (state-tolerance abort), stranding the arm wedged in/under the box. The grasp descent below
+	// stays Cartesian (short, straight down from the natural approach config).
+	auto approach_joints = compute_ik_seeded(pick_poses[0]);
+	if (!approach_joints.has_value()) {
+		RCLCPP_ERROR(LOGGER, "Pick action failed! (no IK for approach pose)");
+		return 0;
+	}
+	success_ = manipulator_.joint_goal(*approach_joints);
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
@@ -477,13 +488,13 @@ bool ConveyorFeedingUtils::safe_retreat()
 	return false;
 }
 
-std::optional<std::vector<double>> ConveyorFeedingUtils::compute_insert_ik(const geometry_msgs::msg::Pose& target)
+std::optional<std::vector<double>> ConveyorFeedingUtils::compute_ik_seeded(const geometry_msgs::msg::Pose& target)
 {
 	static const std::vector<std::string> arm_joints = {
 		"shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint",
 		"wrist_1_joint", "wrist_2_joint", "wrist_3_joint"};
 	if (!ik_client_->wait_for_service(std::chrono::seconds(2))) {
-		RCLCPP_ERROR(LOGGER, "MoveIt insertion: /compute_ik service not available");
+		RCLCPP_ERROR(LOGGER, "compute_ik_seeded: /compute_ik service not available");
 		return std::nullopt;
 	}
 	auto req = std::make_shared<moveit_msgs::srv::GetPositionIK::Request>();
@@ -496,20 +507,21 @@ std::optional<std::vector<double>> ConveyorFeedingUtils::compute_insert_ik(const
 	// ai_start2, and the natural (non-contorted) config the straight-down descent can continue
 	// from. (Without seeding, a pose target lets the planner pick a twisted branch that cannot
 	// descend, which produced the long round-about move and the failed Cartesian descent.)
+	std::vector<double> seed = manipulator_.current_joint_values();
 	req->ik_request.robot_state.joint_state.name = arm_joints;
-	req->ik_request.robot_state.joint_state.position = manipulator_.current_joint_values();
+	req->ik_request.robot_state.joint_state.position = seed;
 	req->ik_request.timeout.sec = 1;
 
 	auto future = ik_client_->async_send_request(req);
 	// run() executes on the main thread while the executor spins on its own thread, so blocking
 	// here is safe -- the executor delivers the response and fulfils the future.
 	if (future.wait_for(std::chrono::seconds(3)) != std::future_status::ready) {
-		RCLCPP_ERROR(LOGGER, "MoveIt insertion: /compute_ik timed out");
+		RCLCPP_ERROR(LOGGER, "compute_ik_seeded: /compute_ik timed out");
 		return std::nullopt;
 	}
 	auto res = future.get();
 	if (res->error_code.val != res->error_code.SUCCESS) {
-		RCLCPP_ERROR(LOGGER, "MoveIt insertion: /compute_ik failed (error code %d)", res->error_code.val);
+		RCLCPP_ERROR(LOGGER, "compute_ik_seeded: /compute_ik failed (error code %d)", res->error_code.val);
 		return std::nullopt;
 	}
 	std::vector<double> joints(arm_joints.size(), 0.0);
@@ -519,7 +531,18 @@ std::optional<std::vector<double>> ConveyorFeedingUtils::compute_insert_ik(const
 			if (sol.name[i] == arm_joints[k]) { joints[k] = sol.position[i]; break; }
 		}
 	}
-	RCLCPP_INFO(LOGGER, "MoveIt insertion: IK -> [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f] (wrist_3=%.1f deg)",
+	// /compute_ik can return a 2*pi-wrapped solution (e.g. shoulder_lift +5.63 rad instead of
+	// -0.65, or wrist_1 +5.04 instead of -1.25) -- the SAME end-effector pose, but as a joint
+	// target it demands a near-2*pi swing that joint_goal then aborts on (and that produces the
+	// long convoluted paths). Re-wind each joint to the 2*pi-equivalent nearest the seed so the
+	// commanded target is the minimal-motion one.
+	if (seed.size() == joints.size()) {
+		for (size_t k = 0; k < joints.size(); ++k) {
+			while (joints[k] - seed[k] > M_PI)  joints[k] -= 2.0 * M_PI;
+			while (joints[k] - seed[k] < -M_PI) joints[k] += 2.0 * M_PI;
+		}
+	}
+	RCLCPP_INFO(LOGGER, "compute_ik_seeded: IK -> [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f] (wrist_3=%.1f deg)",
 	            joints[0], joints[1], joints[2], joints[3], joints[4], joints[5], joints[5] * 180.0 / M_PI);
 	return joints;
 }
@@ -579,7 +602,7 @@ std::optional<bool> ConveyorFeedingUtils::run_moveit_insert_segment(int socket_t
 	// reaches the NATURAL config -- a short move, and the one the vertical descent continues
 	// from -- instead of a contorted branch a pose target might pick.
 	maybe_prompt("press 'Next' to move above the socket");
-	auto above_joints = compute_insert_ik(above_pose);
+	auto above_joints = compute_ik_seeded(above_pose);
 	if (!above_joints.has_value()) {
 		RCLCPP_ERROR(LOGGER, "MoveIt insertion: IK for above-socket pose failed");
 		control_switcher_->release_socket();

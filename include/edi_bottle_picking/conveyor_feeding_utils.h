@@ -88,9 +88,11 @@ namespace conveyor_feeding_utils
 
         /** \brief Compute an IK solution (via the /compute_ik service) for an EE pose, seeded
             from the current arm config so the returned branch is the natural one nearest the
-            current pose (a short move, and one the Cartesian descent can continue from).
+            current pose. Used to reach a pose via a joint-space move on the natural branch
+            instead of a Cartesian move, which (jump_threshold=0) can route through a contorted,
+            near-singular branch the controller then fails to track.
             \return the 6 arm joint values, or nullopt if IK/service failed. */
-        std::optional<std::vector<double>> compute_insert_ik(const geometry_msgs::msg::Pose& target);
+        std::optional<std::vector<double>> compute_ik_seeded(const geometry_msgs::msg::Pose& target);
 
         manipulator_interface::ManipulatorInterface& manipulator_;
         std::atomic<bool> debug_;                 // live-toggled via /conveyor_feeding/debug
