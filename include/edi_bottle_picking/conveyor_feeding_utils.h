@@ -91,8 +91,19 @@ namespace conveyor_feeding_utils
             current pose. Used to reach a pose via a joint-space move on the natural branch
             instead of a Cartesian move, which (jump_threshold=0) can route through a contorted,
             near-singular branch the controller then fails to track.
+            \param max_seed_delta if > 0, reject a solution whose max per-joint deviation from the
+                current config exceeds this (a flipped/contorted IK branch); <= 0 disables the
+                check. Used for the fixed-orientation insert and the pick approach (see ignore_wrist).
+            \param ignore_wrist scope of the branch check. false (insert): check all 6 joints and,
+                on rejection, retry once with a wrist-flip re-seed (the fixed orientation makes any
+                large delta a bad branch). true (pick approach): the top-down grasp wrist is free to
+                rotate, so check only the arm joints 0-2 (shoulder/elbow contortion) and fail clean
+                on rejection (no wrist-flip retry -- it can't fix an arm branch; safe_retreat + the
+                next pick attempt re-solve from a new config).
             \return the 6 arm joint values, or nullopt if IK/service failed. */
-        std::optional<std::vector<double>> compute_ik_seeded(const geometry_msgs::msg::Pose& target);
+        std::optional<std::vector<double>> compute_ik_seeded(const geometry_msgs::msg::Pose& target,
+                                                             double max_seed_delta = -1.0,
+                                                             bool ignore_wrist = false);
 
         manipulator_interface::ManipulatorInterface& manipulator_;
         std::atomic<bool> debug_;                 // live-toggled via /conveyor_feeding/debug

@@ -163,12 +163,14 @@ newwin vacbridge "ros2 launch edi_bottle_picking vacuum_gripper_bridge.launch.py
 wait_for "controllers" "timeout 6 ros2 control list_controllers 2>/dev/null | grep -q 'joint_trajectory_controller.*active'" 90
 wait_for "move_group"  "ros2 node list 2>/dev/null | grep -q /move_group" 90
 
-# The DP node drives the velocity insertion AND publishes the madara_pad collision mesh into
-# the planning scene. In MoveIt comparison mode it is neither needed (conveyor_feeding reads
-# /socket_center directly from Isaac and inserts via MoveIt) nor wanted (the pad collision
-# would block the Cartesian descent), so skip it.
+# The DP node drives the velocity insertion AND (via the diff_physics launch) runs add_pad,
+# which populates the planning scene with the base_table workspace collision (constrains the
+# planner) and the madara_pad (collision-EXCLUDED, RViz-visible). In MoveIt mode the DP
+# controller is skipped, but we still run add_pad standalone so the base_table is present --
+# without it MoveIt routes the arm through the empty workspace and plans long twist-around paths.
 if [[ "$INSERTION_MODE" == "moveit" ]]; then
-    echo "== phase 2: DP node SKIPPED (insertion_mode=moveit) =="
+    echo "== phase 2: DP node SKIPPED (insertion_mode=moveit); running add_pad for workspace collision =="
+    newwin padframe  "ros2 run diff_physics add_pad --ros-args -p use_sim_time:=true"
 else
     echo "== phase 2: DP node ($MODEL_NAME, steps=$STEP_COUNT)$( ((RUN_BESTGRASP)) && echo ' + grasp stand-in') =="
     newwin dp        "ros2 launch diff_physics launch.yaml model_run:=true model_name:=$MODEL_NAME step_count:=$STEP_COUNT collision_check:=$COLLISION_CHECK max_velocity:=$MAX_VELOCITY use_sim_time:=true"
@@ -201,7 +203,7 @@ echo
 if [[ "$BOTTLE_PICKING_ITERATIONS" == "-1" ]]; then ITERS_DISP="config default"; else ITERS_DISP="$BOTTLE_PICKING_ITERATIONS"; fi
 echo "tmux session '$SESSION' is up."
 echo "  insertion_mode=$INSERTION_MODE  model=$MODEL_NAME  steps=$STEP_COUNT  collision_check=$COLLISION_CHECK  max_velocity=$MAX_VELOCITY  gripper=$GRIPPER_TYPE  debug=$DEBUG  bottle_picking_iterations=$ITERS_DISP"
-echo "  windows: control moveit velbridge vacbridge$( [[ $INSERTION_MODE != moveit ]] && echo ' dp')$( ((RUN_BESTGRASP)) && echo ' bestgrasp')$( ((RUN_PICK)) && echo ' pick')$( ((RUN_PICK)) && [[ $DEBUG == false ]] && echo ' autocont')"
+echo "  windows: control moveit velbridge vacbridge$( [[ $INSERTION_MODE == moveit ]] && echo ' padframe' || echo ' dp')$( ((RUN_BESTGRASP)) && echo ' bestgrasp')$( ((RUN_PICK)) && echo ' pick')$( ((RUN_PICK)) && [[ $DEBUG == false ]] && echo ' autocont')"
 if [[ "$INSERTION_MODE" == "moveit" ]]; then
     echo "  NOTE: MoveIt comparison mode -- DP node not launched. For a clean comparison start Isaac with:"
     echo "        python simplified_ur5_scene.py --omnigraph --pad-adj-x 0 --pad-adj-y 0"

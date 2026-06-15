@@ -12,6 +12,12 @@ const rclcpp::Logger LOGGER = rclcpp::get_logger("conveyor_feeding_utils");
 // before a joint-space move back to a ready pose.
 static constexpr double SAFE_LIFT_M = 0.20;
 
+// MoveIt-insertion descent shallowing: if the full-depth descent can't be planned, retry in
+// 2 mm steps up to 10 mm shallower. If the robot can't descend to within 10 mm of the target,
+// that's a genuine failure to address differently (not silently accept a deeper shortfall).
+static constexpr double DESCENT_SHALLOW_STEP_M = 0.002;  // 2 mm increments
+static constexpr double DESCENT_MAX_SHALLOW_M  = 0.010;  // up to 10 mm short of full depth
+
 ConveyorFeedingUtils::ConveyorFeedingUtils(manipulator_interface::ManipulatorInterface& manipulator, std::string grasp_pose_topic, std::string default_controller, bool debug, bool is_isaac, int max_pick_attempts,
     std::string insertion_mode, std::string socket_pose_topic, std::array<double, 3> moveit_insert_offset, double moveit_insert_above_dz,
     std::array<double, 4> moveit_insert_orientation, bool moveit_insert_descent_collision_check)
@@ -305,7 +311,15 @@ bool ConveyorFeedingUtils::try_pick_bottle()
 	// edge bottle) through a contorted, near-singular branch the controller then fails to track
 	// (state-tolerance abort), stranding the arm wedged in/under the box. The grasp descent below
 	// stays Cartesian (short, straight down from the natural approach config).
-	auto approach_joints = compute_ik_seeded(pick_poses[0]);
+	//
+	// Guard the approach IK on the ARM joints only (ignore_wrist=true): even when seeded,
+	// /compute_ik occasionally returns a contorted shoulder/elbow branch for the far-reach (high-
+	// numbered) bottles, which executes as a convoluted approach and leaves a pose the straight-
+	// down grasp descent can't be planned from (the cycle-46 / bottle_5 failure). The top-down
+	// grasp wrist is free to rotate, so the check excludes the wrist (joints 3-5). On a contorted
+	// branch this fails fast -> safe_retreat + retry re-solves from a new config, instead of
+	// executing the convoluted approach and then thrashing on an unplannable descent.
+	auto approach_joints = compute_ik_seeded(pick_poses[0], /*max_seed_delta=*/2.0, /*ignore_wrist=*/true);
 	if (!approach_joints.has_value()) {
 		RCLCPP_ERROR(LOGGER, "Pick action failed! (no IK for approach pose)");
 		return 0;
@@ -488,7 +502,8 @@ bool ConveyorFeedingUtils::safe_retreat()
 	return false;
 }
 
-std::optional<std::vector<double>> ConveyorFeedingUtils::compute_ik_seeded(const geometry_msgs::msg::Pose& target)
+std::optional<std::vector<double>> ConveyorFeedingUtils::compute_ik_seeded(
+	const geometry_msgs::msg::Pose& target, double max_seed_delta, bool ignore_wrist)
 {
 	static const std::vector<std::string> arm_joints = {
 		"shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint",
@@ -497,54 +512,113 @@ std::optional<std::vector<double>> ConveyorFeedingUtils::compute_ik_seeded(const
 		RCLCPP_ERROR(LOGGER, "compute_ik_seeded: /compute_ik service not available");
 		return std::nullopt;
 	}
-	auto req = std::make_shared<moveit_msgs::srv::GetPositionIK::Request>();
-	req->ik_request.group_name = "ur_manipulator";
-	req->ik_request.ik_link_name = "virtual_ee_link";
-	req->ik_request.pose_stamped.header.frame_id = "world";
-	req->ik_request.pose_stamped.pose = target;
-	req->ik_request.avoid_collisions = true;
-	// Seed from the current arm config so IK returns the branch nearest it: a short move from
-	// ai_start2, and the natural (non-contorted) config the straight-down descent can continue
-	// from. (Without seeding, a pose target lets the planner pick a twisted branch that cannot
-	// descend, which produced the long round-about move and the failed Cartesian descent.)
-	std::vector<double> seed = manipulator_.current_joint_values();
-	req->ik_request.robot_state.joint_state.name = arm_joints;
-	req->ik_request.robot_state.joint_state.position = seed;
-	req->ik_request.timeout.sec = 1;
 
-	auto future = ik_client_->async_send_request(req);
-	// run() executes on the main thread while the executor spins on its own thread, so blocking
-	// here is safe -- the executor delivers the response and fulfils the future.
-	if (future.wait_for(std::chrono::seconds(3)) != std::future_status::ready) {
-		RCLCPP_ERROR(LOGGER, "compute_ik_seeded: /compute_ik timed out");
-		return std::nullopt;
-	}
-	auto res = future.get();
-	if (res->error_code.val != res->error_code.SUCCESS) {
-		RCLCPP_ERROR(LOGGER, "compute_ik_seeded: /compute_ik failed (error code %d)", res->error_code.val);
-		return std::nullopt;
-	}
-	std::vector<double> joints(arm_joints.size(), 0.0);
-	const auto& sol = res->solution.joint_state;
-	for (size_t k = 0; k < arm_joints.size(); ++k) {
-		for (size_t i = 0; i < sol.name.size(); ++i) {
-			if (sol.name[i] == arm_joints[k]) { joints[k] = sol.position[i]; break; }
+	// The arm's ACTUAL current config: seeds IK (attempt 1) and is the reference for both the
+	// 2*pi normalization and the branch check (how far the returned solution is from where the
+	// arm is). Seeding from it returns the branch nearest the current pose (a short, natural move).
+	const std::vector<double> cur = manipulator_.current_joint_values();
+	std::vector<double> ik_seed = cur;
+	// Branch check runs when max_seed_delta > 0. Two flavours:
+	//  - insert (ignore_wrist=false): fixed orientation, so ANY large delta is a bad branch; the
+	//    recovery is a wrist flip, so allow a 2nd attempt.
+	//  - pick approach (ignore_wrist=true): the top-down grasp wrist is free to rotate, so the
+	//    check ignores the wrist (joints 3-5) and measures contortion on the ARM (joints 0-2)
+	//    only; a wrist flip can't fix an arm-branch flip, so there's no in-call retry -- reject
+	//    and fail clean, letting safe_retreat + the next pick attempt re-solve from a new config.
+	const int max_attempts = (max_seed_delta > 0.0 && !ignore_wrist) ? 2 : 1;
+
+	for (int attempt = 1; attempt <= max_attempts; ++attempt) {
+		auto req = std::make_shared<moveit_msgs::srv::GetPositionIK::Request>();
+		req->ik_request.group_name = "ur_manipulator";
+		req->ik_request.ik_link_name = "virtual_ee_link";
+		req->ik_request.pose_stamped.header.frame_id = "world";
+		req->ik_request.pose_stamped.pose = target;
+		req->ik_request.avoid_collisions = true;
+		req->ik_request.robot_state.joint_state.name = arm_joints;
+		req->ik_request.robot_state.joint_state.position = ik_seed;
+		req->ik_request.timeout.sec = 1;
+
+		auto future = ik_client_->async_send_request(req);
+		// run() executes on the main thread while the executor spins on its own thread, so
+		// blocking here is safe -- the executor delivers the response and fulfils the future.
+		if (future.wait_for(std::chrono::seconds(3)) != std::future_status::ready) {
+			RCLCPP_ERROR(LOGGER, "compute_ik_seeded: /compute_ik timed out");
+			return std::nullopt;
 		}
-	}
-	// /compute_ik can return a 2*pi-wrapped solution (e.g. shoulder_lift +5.63 rad instead of
-	// -0.65, or wrist_1 +5.04 instead of -1.25) -- the SAME end-effector pose, but as a joint
-	// target it demands a near-2*pi swing that joint_goal then aborts on (and that produces the
-	// long convoluted paths). Re-wind each joint to the 2*pi-equivalent nearest the seed so the
-	// commanded target is the minimal-motion one.
-	if (seed.size() == joints.size()) {
-		for (size_t k = 0; k < joints.size(); ++k) {
-			while (joints[k] - seed[k] > M_PI)  joints[k] -= 2.0 * M_PI;
-			while (joints[k] - seed[k] < -M_PI) joints[k] += 2.0 * M_PI;
+		auto res = future.get();
+		if (res->error_code.val != res->error_code.SUCCESS) {
+			RCLCPP_ERROR(LOGGER, "compute_ik_seeded: /compute_ik failed (error code %d)", res->error_code.val);
+			return std::nullopt;
 		}
+		std::vector<double> joints(arm_joints.size(), 0.0);
+		const auto& sol = res->solution.joint_state;
+		for (size_t k = 0; k < arm_joints.size(); ++k) {
+			for (size_t i = 0; i < sol.name.size(); ++i) {
+				if (sol.name[i] == arm_joints[k]) { joints[k] = sol.position[i]; break; }
+			}
+		}
+		// Re-wind each joint to the 2*pi-equivalent nearest the actual current config (minimal
+		// motion); /compute_ik can return a 2*pi-wrapped solution (same EE pose, huge swing).
+		for (size_t k = 0; k < joints.size() && k < cur.size(); ++k) {
+			while (joints[k] - cur[k] > M_PI)  joints[k] -= 2.0 * M_PI;
+			while (joints[k] - cur[k] < -M_PI) joints[k] += 2.0 * M_PI;
+		}
+
+		// IK-branch guard. /compute_ik can return a different solution family (branch) than the one
+		// nearest the current config: same EE pose, very different joints. Executing it routes the
+		// arm the long way (convoluted plan) and lands in a contorted/near-singular pose the next
+		// straight-line Cartesian move can't continue from. Detect it as a large deviation from the
+		// current config (after the 2*pi normalization above, so this is a real branch difference).
+		if (max_seed_delta > 0.0) {
+			// insert: check all 6 joints (orientation is fixed, any big delta is a bad branch).
+			// pick approach (ignore_wrist): check only the arm joints 0-2 -- the wrist is free to
+			// rotate for the top-down grasp, so a big wrist delta is legitimate, but a shoulder/
+			// elbow flip is the contortion that breaks the grasp descent (the cycle-46 failure).
+			const size_t check_n = ignore_wrist ? 3 : joints.size();
+			double maxdelta = 0.0; size_t worst = 0;
+			for (size_t k = 0; k < check_n && k < cur.size(); ++k) {
+				double d = std::fabs(joints[k] - cur[k]);
+				if (d > maxdelta) { maxdelta = d; worst = k; }
+			}
+			if (maxdelta > max_seed_delta) {
+				if (ignore_wrist) {
+					RCLCPP_WARN(LOGGER, "IK-branch guard: REJECTED contorted pick-approach IK "
+					            "(attempt %d/%d): max ARM joint delta %.2f rad on %s > %.2f; "
+					            "arm=[%.2f, %.2f, %.2f]",
+					            attempt, max_attempts, maxdelta, arm_joints[worst].c_str(), max_seed_delta,
+					            joints[0], joints[1], joints[2]);
+					// A wrist flip can't fix an arm-branch flip, so don't retry in-call: fail clean
+					// and let safe_retreat + the next pick attempt re-solve from a new config.
+					continue;
+				}
+				RCLCPP_WARN(LOGGER, "IK-branch guard: REJECTED flipped/contorted insert IK "
+				            "(attempt %d/%d): max joint delta %.2f rad on %s > %.2f; "
+				            "wrist=[%.2f, %.2f, %.2f] (wrist_3=%.1f deg)",
+				            attempt, max_attempts, maxdelta, arm_joints[worst].c_str(), max_seed_delta,
+				            joints[3], joints[4], joints[5], joints[5] * 180.0 / M_PI);
+				// Re-seed the next attempt with the wrist flipped (spherical-wrist alternate
+				// solution: w1+pi, -w2, w3+pi) to bias /compute_ik onto the other branch.
+				ik_seed = joints;
+				ik_seed[3] += M_PI;
+				ik_seed[4]  = -ik_seed[4];
+				ik_seed[5] += M_PI;
+				continue;
+			}
+			// Accepted: log the margin so the threshold can be tuned from real runs.
+			RCLCPP_INFO(LOGGER, "IK-branch guard: accepted (%s) max checked-joint delta %.2f rad <= %.2f%s",
+			            ignore_wrist ? "arm 0-2" : "all 6", maxdelta, max_seed_delta,
+			            attempt > 1 ? " [RECOVERED after re-seed]" : "");
+		}
+
+		RCLCPP_INFO(LOGGER, "compute_ik_seeded: IK -> [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f] (wrist_3=%.1f deg)",
+		            joints[0], joints[1], joints[2], joints[3], joints[4], joints[5], joints[5] * 180.0 / M_PI);
+		return joints;
 	}
-	RCLCPP_INFO(LOGGER, "compute_ik_seeded: IK -> [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f] (wrist_3=%.1f deg)",
-	            joints[0], joints[1], joints[2], joints[3], joints[4], joints[5], joints[5] * 180.0 / M_PI);
-	return joints;
+
+	RCLCPP_ERROR(LOGGER, "IK-branch guard: %s stayed contorted after %d attempt(s); failing "
+	            "(avoids a contorted execution / dropped bottle)",
+	            ignore_wrist ? "pick-approach IK (arm branch)" : "insert IK", max_attempts);
+	return std::nullopt;
 }
 
 std::optional<bool> ConveyorFeedingUtils::run_moveit_insert_segment(int socket_timeout_sec)
@@ -602,7 +676,10 @@ std::optional<bool> ConveyorFeedingUtils::run_moveit_insert_segment(int socket_t
 	// reaches the NATURAL config -- a short move, and the one the vertical descent continues
 	// from -- instead of a contorted branch a pose target might pick.
 	maybe_prompt("press 'Next' to move above the socket");
-	auto above_joints = compute_ik_seeded(above_pose);
+	// max_seed_delta=2.0: reject a flipped/contorted insert IK branch (wrist_3 ~ +4 deg instead
+	// of -176 deg) -- legit insert solutions stay < ~1 rad from the seed, the flipped branch is
+	// > 3 rad. Retries with a wrist-flip re-seed; fails clean (logged) if it can't recover.
+	auto above_joints = compute_ik_seeded(above_pose, /*max_seed_delta=*/2.0);
 	if (!above_joints.has_value()) {
 		RCLCPP_ERROR(LOGGER, "MoveIt insertion: IK for above-socket pose failed");
 		control_switcher_->release_socket();
@@ -619,9 +696,28 @@ std::optional<bool> ConveyorFeedingUtils::run_moveit_insert_segment(int socket_t
 	// planning scene's solid table/pad (no socket hole modelled) blocks the descent; turn it off
 	// to match the DP segment, which had no MoveIt collision checking. The descent stays a
 	// fixed-orientation straight line; depth is bounded by moveit_insert_offset_xyz[z].
+	//
+	// Shallowing salvage: if the full-depth descent can't be planned (e.g. a collision near the
+	// very bottom), retry in 2 mm steps up to 10 mm shallower -- a partial insertion beats
+	// dropping the bottle. Full depth (dz=0) is tried first, so normal inserts are unaffected;
+	// failing to descend to within 10 mm is a genuine failure (returned as such).
 	maybe_prompt("press 'Next' to lower the bottle into the socket");
-	if (!manipulator_.cartesian_goal(insert_pose, 50.0, /*avoid_collisions=*/moveit_insert_descent_collision_check_)) {
-		RCLCPP_ERROR(LOGGER, "MoveIt insertion: Cartesian descent into the socket failed");
+	bool descended = false;
+	for (double dz = 0.0; dz <= DESCENT_MAX_SHALLOW_M + 1e-9; dz += DESCENT_SHALLOW_STEP_M) {
+		geometry_msgs::msg::Pose descend_pose = insert_pose;
+		descend_pose.position.z += dz;
+		if (manipulator_.cartesian_goal(descend_pose, 50.0, /*avoid_collisions=*/moveit_insert_descent_collision_check_)) {
+			if (dz > 0.0) {
+				RCLCPP_WARN(LOGGER, "MoveIt insertion: full-depth descent unplannable; inserted "
+				            "%.0f mm shallower (z+%.3f) -- partial insertion", dz * 1000.0, dz);
+			}
+			descended = true;
+			break;
+		}
+	}
+	if (!descended) {
+		RCLCPP_ERROR(LOGGER, "MoveIt insertion: Cartesian descent failed even %.0f mm shallow; "
+		            "genuine failure", DESCENT_MAX_SHALLOW_M * 1000.0);
 		control_switcher_->release_socket();
 		return false;
 	}
