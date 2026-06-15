@@ -313,13 +313,15 @@ bool ConveyorFeedingUtils::try_pick_bottle()
 	// stays Cartesian (short, straight down from the natural approach config).
 	//
 	// Guard the approach IK on the ARM joints only (ignore_wrist=true): even when seeded,
-	// /compute_ik occasionally returns a contorted shoulder/elbow branch for the far-reach (high-
-	// numbered) bottles, which executes as a convoluted approach and leaves a pose the straight-
-	// down grasp descent can't be planned from (the cycle-46 / bottle_5 failure). The top-down
-	// grasp wrist is free to rotate, so the check excludes the wrist (joints 3-5). On a contorted
-	// branch this fails fast -> safe_retreat + retry re-solves from a new config, instead of
-	// executing the convoluted approach and then thrashing on an unplannable descent.
-	auto approach_joints = compute_ik_seeded(pick_poses[0], /*max_seed_delta=*/2.0, /*ignore_wrist=*/true);
+	// /compute_ik occasionally returns a contorted shoulder/elbow branch (elbow flipped up,
+	// shoulder_lift toward horizontal) that reaches the approach pose but can't execute the
+	// straight-down grasp descent (the cycle-46 / bottle_5 thrash). The top-down grasp wrist is
+	// free to rotate, so the check excludes the wrist (joints 3-5). max_seed_delta=1.0: over a
+	// 50-cycle run every legitimate approach measured <= 0.70 rad while the one contorted branch
+	// was 1.72 rad -- a clean gap, so 1.0 rejects it with margin and zero risk to normal picks.
+	// On rejection it fails fast (arm hasn't moved) -> retry re-solves from above_box_1, instead
+	// of executing the convoluted approach and then thrashing on an unplannable descent.
+	auto approach_joints = compute_ik_seeded(pick_poses[0], /*max_seed_delta=*/1.0, /*ignore_wrist=*/true);
 	if (!approach_joints.has_value()) {
 		RCLCPP_ERROR(LOGGER, "Pick action failed! (no IK for approach pose)");
 		return 0;
@@ -676,19 +678,27 @@ std::optional<bool> ConveyorFeedingUtils::run_moveit_insert_segment(int socket_t
 	// reaches the NATURAL config -- a short move, and the one the vertical descent continues
 	// from -- instead of a contorted branch a pose target might pick.
 	maybe_prompt("press 'Next' to move above the socket");
-	// max_seed_delta=2.0: reject a flipped/contorted insert IK branch (wrist_3 ~ +4 deg instead
-	// of -176 deg) -- legit insert solutions stay < ~1 rad from the seed, the flipped branch is
-	// > 3 rad. Retries with a wrist-flip re-seed; fails clean (logged) if it can't recover.
+	// Primary path: seeded /compute_ik (max_seed_delta=2.0 rejects the flipped-wrist branch,
+	// wrist_3 ~ +4 deg instead of -176 deg) + joint_goal to that explicit joint target.
 	auto above_joints = compute_ik_seeded(above_pose, /*max_seed_delta=*/2.0);
-	if (!above_joints.has_value()) {
-		RCLCPP_ERROR(LOGGER, "MoveIt insertion: IK for above-socket pose failed");
-		control_switcher_->release_socket();
-		return false;
-	}
-	if (!manipulator_.joint_goal(*above_joints)) {
-		RCLCPP_ERROR(LOGGER, "MoveIt insertion: failed to reach above-socket pose");
-		control_switcher_->release_socket();
-		return false;
+	bool reached_above = above_joints.has_value() && manipulator_.joint_goal(*above_joints);
+	if (!reached_above) {
+		// Fallback: pose_goal (setPoseTarget + the global OMPL planner). /compute_ik is a local,
+		// seed-sensitive solver; with base_table in the scene the local natural solutions near
+		// the post-pick seed can be in collision, so it converges to the flipped branch and the
+		// guard (rightly) rejects it -- the cycle-49 / -X-reach drop. A collision-free NATURAL
+		// solution still exists at these poses (verified by probe_cycle49.py); the global planner
+		// searches IK branches broadly and finds it, recovering the insert instead of dropping.
+		RCLCPP_WARN(LOGGER, "MoveIt insertion: seeded-IK above-socket move failed (%s); "
+		            "falling back to pose_goal (global plan)",
+		            above_joints.has_value() ? "joint_goal unplannable" : "no clean IK branch");
+		if (!manipulator_.pose_goal(above_pose)) {
+			RCLCPP_ERROR(LOGGER, "MoveIt insertion: above-socket move failed "
+			             "(seeded IK and pose_goal fallback both failed)");
+			control_switcher_->release_socket();
+			return false;
+		}
+		RCLCPP_INFO(LOGGER, "MoveIt insertion: reached above-socket via pose_goal fallback");
 	}
 
 	// Move 2: straight-down Cartesian descent into the socket. Collision checking is
