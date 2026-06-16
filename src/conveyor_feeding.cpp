@@ -137,6 +137,13 @@ int main(int argc, char ** argv)
 
   conveyor_feeding_utils.add_box();
 
+  // Move once to the scenario's initial/home pose (wait_slam) before the cycle starts. This is
+  // no longer re-visited each iteration -- iterations begin at above_box_1 directly. Best-effort:
+  // warn (don't abort) on failure, since the first iteration's above_box_1 move runs regardless.
+  if (!conveyor_feeding_utils.move_to_initial_pose()) {
+    RCLCPP_WARN(LOGGER, "Could not reach initial pose 'wait_slam' at startup; continuing anyway");
+  }
+
   bool success;
   int iter_count = 0;
 

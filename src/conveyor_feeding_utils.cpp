@@ -256,13 +256,10 @@ bool ConveyorFeedingUtils::try_pick_bottle()
 	manipulator_.detach_collision_object();
 	manipulator_.remove_collision_object();
 
-    maybe_prompt("press 'Next' to go to position above pickup place");
-    success_ = manipulator_.predefined_pose("wait_slam"); //TODO: make pose nearer the box
-    if(!success_){
-		RCLCPP_ERROR(LOGGER, "Pick action failed!");
-		return 0;
-	}
-
+	// wait_slam is no longer re-visited at the start of every attempt; it is set once at
+	// scenario startup (move_to_initial_pose, before the iteration loop). Each attempt now
+	// begins its motion at above_box_1 (below), reached directly from wherever the previous
+	// iteration ended (ai_after_pickup) or from the startup wait_slam on the first iteration.
 	success_ = command_vacuum(false);
 	if (!success_) {
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
@@ -376,12 +373,21 @@ bool ConveyorFeedingUtils::try_pick_bottle()
 	return true;
 }
 
+bool ConveyorFeedingUtils::move_to_initial_pose()
+{
+	// One-time move to the scenario's initial/home pose at startup (before the iteration loop).
+	// wait_slam is no longer part of the per-iteration cycle; this is the only place it is
+	// commanded as a normal move (it is also kept as the safe_retreat() recovery fallback).
+	maybe_prompt("press 'Next' to go to initial pose (wait_slam)");
+	return manipulator_.predefined_pose("wait_slam");
+}
+
 bool ConveyorFeedingUtils::run()
 {
 	// Pick a bottle, retrying on failure. A failed attempt can leave the arm down in the box;
 	// safe_retreat() lifts it back out to a plannable ready pose so the retry -- and the next
 	// iteration -- start clean. Without this, one failed pick wedges the arm in the box and every
-	// following iteration fails at its first move (wait_slam can't be planned out of the box).
+	// following iteration fails at its first move (above_box_1 can't be planned out of the box).
 	bool grasped = false;
 	for (int attempt = 1; attempt <= max_pick_attempts_ && rclcpp::ok(); ++attempt) {
 		if (try_pick_bottle()) { grasped = true; break; }

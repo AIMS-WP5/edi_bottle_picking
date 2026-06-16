@@ -32,6 +32,13 @@ namespace conveyor_feeding_utils
 
     ~ConveyorFeedingUtils(); // Destructor
 
+    /** \brief Move once to the scenario's initial/home pose (wait_slam) before the iteration
+        loop starts. wait_slam used to be re-visited at the start of every pick attempt; it is
+        now only the one-time startup pose, so each iteration begins its motion at above_box_1
+        directly. Best-effort: returns the plan result so the caller can warn (not abort) on
+        failure -- the first iteration's above_box_1 move is attempted regardless. */
+    bool move_to_initial_pose();
+
     bool run();
 
     /** \brief Function to get first grasp position published by selected topic
@@ -66,9 +73,9 @@ namespace conveyor_feeding_utils
             run mid-wait with no final click. No-op when debug is disabled. */
         void maybe_prompt(const std::string& msg);
 
-        /** \brief One full pick attempt: go to wait_slam, read the grasp pose, approach,
-            descend, grip, confirm via get_grasped_status, and retreat to above_box_1. Returns
-            true only if the bottle is grasped and the arm is back at above_box_1. */
+        /** \brief One full pick attempt: read the grasp pose, move above the box (above_box_1),
+            approach, descend, grip, confirm via get_grasped_status, and retreat to above_box_1.
+            Returns true only if the bottle is grasped and the arm is back at above_box_1. */
         bool try_pick_bottle();
 
         /** \brief Best-effort recovery to a safe, plannable pose after a failed pick: release
