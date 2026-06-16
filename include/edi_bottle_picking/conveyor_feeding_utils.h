@@ -27,7 +27,8 @@ namespace conveyor_feeding_utils
                          std::string insertion_mode = "dp", std::string socket_pose_topic = "socket_center",
                          std::array<double, 3> moveit_insert_offset = {0.0, 0.0, 0.0}, double moveit_insert_above_dz = 0.10,
                          std::array<double, 4> moveit_insert_orientation = {0.515881, 0.483598, -0.515881, -0.483598},
-                         bool moveit_insert_descent_collision_check = true); // Constructor
+                         bool moveit_insert_descent_collision_check = true,
+                         int moveit_insert_fallback_max_waypoints = 85, bool moveit_insert_validate_descent = true); // Constructor
 
     ~ConveyorFeedingUtils(); // Destructor
 
@@ -133,6 +134,9 @@ namespace conveyor_feeding_utils
         double moveit_insert_above_dz_;           // height above the insert pose for the MoveIt approach (m)
         std::array<double, 4> moveit_insert_orientation_;  // fixed EE orientation for the insert, [x,y,z,w]
         bool moveit_insert_descent_collision_check_;       // collision-check the Cartesian descent?
+        // Guards on the above-socket move's pose_goal global-planner fallback (MoveIt mode only):
+        int moveit_insert_fallback_max_waypoints_;         // reject (fail iter) if the fallback plan exceeds this many waypoints
+        bool moveit_insert_validate_descent_;              // pre-validate the descent from the planned above-config before executing
         std::unique_ptr<edi_bottle_picking::ControlModeSwitcher> control_switcher_;
 	};
 

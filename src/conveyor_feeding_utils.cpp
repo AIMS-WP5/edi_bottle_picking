@@ -20,10 +20,12 @@ static constexpr double DESCENT_MAX_SHALLOW_M  = 0.010;  // up to 10 mm short of
 
 ConveyorFeedingUtils::ConveyorFeedingUtils(manipulator_interface::ManipulatorInterface& manipulator, std::string grasp_pose_topic, std::string default_controller, bool debug, bool is_isaac, int max_pick_attempts,
     std::string insertion_mode, std::string socket_pose_topic, std::array<double, 3> moveit_insert_offset, double moveit_insert_above_dz,
-    std::array<double, 4> moveit_insert_orientation, bool moveit_insert_descent_collision_check)
+    std::array<double, 4> moveit_insert_orientation, bool moveit_insert_descent_collision_check,
+    int moveit_insert_fallback_max_waypoints, bool moveit_insert_validate_descent)
     : manipulator_(manipulator), debug_(debug), simulation_(is_isaac), max_pick_attempts_(max_pick_attempts), default_controller_(default_controller),
       insertion_mode_(insertion_mode), socket_pose_topic_(socket_pose_topic), moveit_insert_offset_(moveit_insert_offset), moveit_insert_above_dz_(moveit_insert_above_dz),
-      moveit_insert_orientation_(moveit_insert_orientation), moveit_insert_descent_collision_check_(moveit_insert_descent_collision_check)
+      moveit_insert_orientation_(moveit_insert_orientation), moveit_insert_descent_collision_check_(moveit_insert_descent_collision_check),
+      moveit_insert_fallback_max_waypoints_(moveit_insert_fallback_max_waypoints), moveit_insert_validate_descent_(moveit_insert_validate_descent)
 {
 	sub_grasp_pose_ = manipulator.node_->create_subscription<geometry_msgs::msg::PoseStamped>(
 		grasp_pose_topic, 10, std::bind(&ConveyorFeedingUtils::grasp_pose_callback, this, _1)
@@ -689,16 +691,55 @@ std::optional<bool> ConveyorFeedingUtils::run_moveit_insert_segment(int socket_t
 		// guard (rightly) rejects it -- the cycle-49 / -X-reach drop. A collision-free NATURAL
 		// solution still exists at these poses (verified by probe_cycle49.py); the global planner
 		// searches IK branches broadly and finds it, recovering the insert instead of dropping.
+		// BUT the global planner can also pick a contorted/near-singular branch via a very long,
+		// twisted path (iter-13: 158 waypoints, ~40 s execution, then a descent that only achieves
+		// ~40%). So PLAN ONLY here and run two pre-execution guards; on either trip, fail the
+		// iteration (skip this socket target) instead of executing the long move just to drop the
+		// bottle high.
 		RCLCPP_WARN(LOGGER, "MoveIt insertion: seeded-IK above-socket move failed (%s); "
-		            "falling back to pose_goal (global plan)",
+		            "falling back to pose_goal (global plan) -- guarded",
 		            above_joints.has_value() ? "joint_goal unplannable" : "no clean IK branch");
-		if (!manipulator_.pose_goal(above_pose)) {
+
+		auto pr = manipulator_.plan_pose_goal(above_pose);   // plan only; do not execute yet
+		if (!pr.ok) {
 			RCLCPP_ERROR(LOGGER, "MoveIt insertion: above-socket move failed "
-			             "(seeded IK and pose_goal fallback both failed)");
+			             "(seeded IK and pose_goal fallback both failed to plan)");
 			control_switcher_->release_socket();
 			return false;
 		}
-		RCLCPP_INFO(LOGGER, "MoveIt insertion: reached above-socket via pose_goal fallback");
+
+		// GUARD 1 -- waypoint cap: reject a clearly twisted fallback plan before executing it.
+		if (pr.geometric_waypoints > moveit_insert_fallback_max_waypoints_) {
+			RCLCPP_ERROR(LOGGER, "MoveIt insertion: GUARD1 fallback plan has %.0f waypoints > cap %d "
+			             "(twisted/contorted path); failing iteration before the long move",
+			             pr.geometric_waypoints, moveit_insert_fallback_max_waypoints_);
+			control_switcher_->release_socket();
+			return false;
+		}
+
+		// GUARD 2 -- descent pre-validation: confirm a straight-down descent is plannable FROM the
+		// planned above-config (not the current state) before committing the move. Mirrors the real
+		// descent's shallowing salvage + collision setting, so it accepts exactly what the descent
+		// itself would; a near-singular arrival (iter-13) is caught here up front.
+		if (moveit_insert_validate_descent_ &&
+		    !manipulator_.cartesian_descent_feasible(pr.goal_joint_names, pr.goal_positions,
+		            above_pose, insert_pose, moveit_insert_descent_collision_check_,
+		            DESCENT_SHALLOW_STEP_M, DESCENT_MAX_SHALLOW_M)) {
+			RCLCPP_ERROR(LOGGER, "MoveIt insertion: GUARD2 straight-down descent infeasible from the "
+			             "planned above-config (near-singular/contorted arrival); failing iteration "
+			             "before the long move");
+			control_switcher_->release_socket();
+			return false;
+		}
+
+		// Both guards passed -- execute the (vetted) fallback move.
+		if (!manipulator_.execute_plan(pr.plan)) {
+			RCLCPP_ERROR(LOGGER, "MoveIt insertion: above-socket fallback plan vetted but execution failed");
+			control_switcher_->release_socket();
+			return false;
+		}
+		RCLCPP_INFO(LOGGER, "MoveIt insertion: reached above-socket via guarded pose_goal fallback (%.0f waypoints)",
+		            pr.geometric_waypoints);
 	}
 
 	// Move 2: straight-down Cartesian descent into the socket. Collision checking is

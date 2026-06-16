@@ -27,6 +27,14 @@ std::vector<double> moveit_insert_orientation = config["moveit_insert_orientatio
     ? config["moveit_insert_orientation_xyzw"].as<std::vector<double>>() : std::vector<double>{0.515881, 0.483598, -0.515881, -0.483598};
 bool moveit_insert_descent_collision_check = config["moveit_insert_descent_collision_check"]
     ? config["moveit_insert_descent_collision_check"].as<bool>() : true;
+// Guards on the above-socket move's global-planner fallback (MoveIt mode only): reject an
+// over-complex fallback plan, and pre-validate the descent from the planned above-config, BEFORE
+// executing -- so a contorted plan fails the iteration up front instead of running a long move
+// that then can't descend.
+int moveit_insert_fallback_max_waypoints = config["moveit_insert_fallback_max_waypoints"]
+    ? config["moveit_insert_fallback_max_waypoints"].as<int>() : 85;
+bool moveit_insert_validate_descent = config["moveit_insert_validate_descent"]
+    ? config["moveit_insert_validate_descent"].as<bool>() : true;
 
 int main(int argc, char ** argv)
 {
@@ -107,11 +115,14 @@ int main(int argc, char ** argv)
                 insert_offset[0], insert_offset[1], insert_offset[2], moveit_insert_above_dz,
                 insert_orientation[0], insert_orientation[1], insert_orientation[2], insert_orientation[3],
                 moveit_insert_descent_collision_check ? "true" : "false", socket_pose_topic.c_str());
+    RCLCPP_INFO(LOGGER, "conveyor_feeding: moveit insert fallback guards: max_waypoints=%d validate_descent=%s",
+                moveit_insert_fallback_max_waypoints, moveit_insert_validate_descent ? "true" : "false");
   }
 
   ConveyorFeedingUtils conveyor_feeding_utils(manipulator, grasp_pose_topic, default_controller, debug, is_isaac, max_pick_attempts,
                                               insertion_mode, socket_pose_topic, insert_offset, moveit_insert_above_dz, insert_orientation,
-                                              moveit_insert_descent_collision_check);
+                                              moveit_insert_descent_collision_check,
+                                              moveit_insert_fallback_max_waypoints, moveit_insert_validate_descent);
 
   rclcpp::Duration d = rclcpp::Duration::from_seconds(1.0);
   if(!application.gripper_action_client_ptr->wait_for_action_server(d.to_chrono<std::chrono::duration<double>>())) {

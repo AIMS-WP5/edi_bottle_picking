@@ -27,3 +27,9 @@ moveit_insert_orientation_xyzw: [0.483598, -0.515881, -0.483598, 0.515881]
 # depth). false = skip checking for the descent (matches the DP segment, which had none). Set
 # false only if collision checking spuriously blocks a legitimate insertion.
 moveit_insert_descent_collision_check: true
+# Guards on the above-socket move's pose_goal global-planner FALLBACK (used only when the seeded-IK
+# natural branch fails). The fallback can occasionally return a twisted ~158-waypoint plan (normal
+# moves are ~41-57) that lands the arm near-singular and then can't descend. Both guards run BEFORE
+# the (potentially ~40 s) move executes, so a bad plan fails the iteration up front instead.
+moveit_insert_fallback_max_waypoints: 85   # reject (fail iter) if the fallback plan exceeds this many waypoints
+moveit_insert_validate_descent: true       # pre-validate the straight-down descent from the planned above-config first
