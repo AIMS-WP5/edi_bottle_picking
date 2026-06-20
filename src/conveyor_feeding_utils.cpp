@@ -396,9 +396,23 @@ bool ConveyorFeedingUtils::run()
 		safe_retreat();
 	}
 	if (!grasped) {
-		safe_retreat();
-		RCLCPP_ERROR(LOGGER, "Pick failed after %d attempt(s); advancing to next iteration",
-		             max_pick_attempts_);
+		// The pick never grasped, so this iteration runs no insertion segment and would normally
+		// publish no can_update edge. Isaac's cycle counter advances ONLY on the false->true release
+		// edge, so a missing edge strands it: cycle_n undershoots the iteration count by the number of
+		// pre-grasp pick failures, making --auto-exit (cycle_n >= N) unreachable and hanging the sim.
+		// Bracket the give-up with the same freeze->release handshake a real segment uses, so Isaac
+		// ticks one cycle and logs a skipped-cycle record (segment times + target pad; sentinel
+		// bottle, since nothing was picked). safe_retreat() between the edges is a real trajectory and
+		// supplies the dwell Isaac needs to observe the intermediate 'false'; the short sleep
+		// guarantees that dwell even if the retreat returns fast. freeze_socket()/release_socket()
+		// only publish the Bool (no controller switch, no dp_exec_start), so a skip has no side
+		// effects on the DP velocity node or the arm's control mode.
+		control_switcher_->freeze_socket();              // segment start: can_update=false (freeze)
+		safe_retreat();                                  // real motion -> natural multi-second dwell
+		std::this_thread::sleep_for(750ms);              // floor the dwell so Isaac always sees 'false'
+		control_switcher_->release_socket();             // segment end: can_update=true -> Isaac ticks
+		RCLCPP_ERROR(LOGGER, "Pick failed after %d attempt(s); published skipped-cycle handshake; "
+		             "advancing to next iteration", max_pick_attempts_);
 		return false;
 	}
 
