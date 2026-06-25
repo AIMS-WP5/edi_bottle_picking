@@ -8,8 +8,8 @@ namespace constant_pose_utils
 
 const rclcpp::Logger LOGGER = rclcpp::get_logger("constant_pose_utils");
 
-ConstantPoseUtils::ConstantPoseUtils(manipulator_interface::ManipulatorInterface& manipulator, bool pose_from_topic, std::string pose_topic_name, bool debug)
-    : manipulator_(manipulator), debug_(debug), use_pose_from_topic_(pose_from_topic)
+ConstantPoseUtils::ConstantPoseUtils(manipulator_interface::ManipulatorInterface& manipulator, bool pose_from_topic, std::string pose_topic_name, std::string default_controller, bool debug)
+    : manipulator_(manipulator), debug_(debug), use_pose_from_topic_(pose_from_topic), default_controller_(default_controller)
 {
 	if (use_pose_from_topic_) {
 		sub_grasp_pose_ = manipulator.node_->create_subscription<geometry_msgs::msg::PoseStamped>(
@@ -174,30 +174,49 @@ bool ConstantPoseUtils::pickup()
 	if(debug_){
 		manipulator_.world_marker_->prompt("press 'Next' to switch controllers");
 	}
-	success_ = switch_controllers("forward_velocity_controller", "joint_trajectory_controller");
+	success_ = switch_controllers("forward_velocity_controller", default_controller_);
 
 	if(debug_){
 		manipulator_.world_marker_->prompt("press 'Next' to start DP control");
 	}
+	insertion_finished_ = false;
 	auto start_msg = std_msgs::msg::Empty();
 	pub_dp_exec_start_->publish(start_msg);
 
-	// if(debug_){
-	// 	manipulator_.world_marker_->prompt("press 'Next' to switch controllers back");
-	// }
-	// success_ = switch_controllers("joint_trajectory_controller", "forward_velocity_controller");
+	while(!insertion_finished_) {
+		std::this_thread::sleep_for(100ms);
+	}
+
+	RCLCPP_INFO(LOGGER, "DP execution finished.");
+	switch_controllers(default_controller_, "forward_velocity_controller");
+
+	if (insertion_successful_) {
+		RCLCPP_INFO(LOGGER, "DP trajectory successful");
+		manipulator_.activate_vacuum_gripper(false); // release bottle
+		manipulator_.detach_collision_object();
+		if(debug_){
+			manipulator_.world_marker_->prompt("press 'Next' to go back");
+		}
+		success_ = manipulator_.predefined_pose("ai_start2");
+		if(!success_){
+			RCLCPP_ERROR(LOGGER, "Pick action failed!");
+			return 0;
+		}
+
+		return true; //successful iteration
+	}
+
+	// otherwise insertion was unsuccessful
+	RCLCPP_INFO(LOGGER, "Error while inserting bottle, putting it back");
 
 	if(debug_){
-        manipulator_.world_marker_->prompt("press 'Next' to go to position above pickup place");
-    }
-    success_ = manipulator_.predefined_pose("wait_slam");
-    if(!success_){
+		manipulator_.world_marker_->prompt("press 'Next' to go back");
+	}
+	success_ = manipulator_.predefined_pose("wait_slam");
+	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
 	}
-	if(debug_){
-        manipulator_.world_marker_->prompt("press 'Next' to drop off bottle");
-    }
 
 	success_ = manipulator_.cartesian_goal(pick_poses[0]);
 	if(!success_){
@@ -218,6 +237,8 @@ bool ConstantPoseUtils::pickup()
 	} else {
 		RCLCPP_INFO(LOGGER, "Suction disabled!");
 	}
+	manipulator_.detach_collision_object();
+
 	geometry_msgs::msg::Pose retreat_pose = pick_poses[1];
 	retreat_pose.position.z = retreat_pose.position.z + 0.01;
 
@@ -234,9 +255,7 @@ bool ConstantPoseUtils::pickup()
 		RCLCPP_INFO(LOGGER, "Suction disabled!");
 	}
 
-	manipulator_.detach_collision_object();
-
-	return true;
+	return false;
 }
 
 bool ConstantPoseUtils::switch_controllers(std::string start_ctrl_name, std::string stop_ctrl_name)
@@ -283,11 +302,8 @@ bool ConstantPoseUtils::switch_controllers(std::string start_ctrl_name, std::str
 
 void ConstantPoseUtils::dp_exec_done_callback(const std_msgs::msg::Bool::SharedPtr msg)
 {
-	bool success = msg->data;
-	if (success) RCLCPP_INFO(LOGGER, "Inserting bottle successful");
-	else RCLCPP_INFO(LOGGER, "Error while inserting bottle");
-
-	switch_controllers("joint_trajectory_controller", "forward_velocity_controller");
+	insertion_finished_ = true;
+	insertion_successful_ = msg->data;
 }
 
 } // namespace constant_pose_utils

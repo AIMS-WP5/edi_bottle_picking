@@ -17,7 +17,7 @@ namespace constant_pose_utils
 	class ConstantPoseUtils
     {
     public:
-    ConstantPoseUtils(manipulator_interface::ManipulatorInterface& manipulator,  bool pose_from_topic, std::string pose_topic_name, bool debug = true); // Constructor
+    ConstantPoseUtils(manipulator_interface::ManipulatorInterface& manipulator,  bool pose_from_topic, std::string pose_topic_name, std::string default_controller, bool debug = true); // Constructor
 
     ~ConstantPoseUtils(); // Destructor
 
@@ -35,11 +35,12 @@ namespace constant_pose_utils
 
 	private:
         manipulator_interface::ManipulatorInterface& manipulator_;
-        bool debug_, success_, use_pose_from_topic_;
+        bool debug_, success_, use_pose_from_topic_, insertion_finished_, insertion_successful_;
         rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr sub_grasp_pose_;
         geometry_msgs::msg::Pose curr_grasp_pose_;
         rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr pub_dp_exec_start_;
         rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr sub_dp_exec_done_;
+        std::string default_controller_;
 	};
 
 }

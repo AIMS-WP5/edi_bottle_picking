@@ -2,3 +2,4 @@ debug: true
 iterations: 5
 pose_from_topic: false
 pose_topic_name: "const_pose"
+default_controller: "joint_trajectory_controller" # scaled_joint_trajectory_controller for real robot

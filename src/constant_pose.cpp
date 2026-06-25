@@ -17,6 +17,7 @@ bool debug = config["debug"].as<bool>();
 int total_iterations = config["iterations"].as<int>();
 bool pose_from_topic = config["pose_from_topic"].as<bool>();
 std::string pose_topic_name = config["pose_topic_name"].as<std::string>();
+std::string default_controller = config["default_controller"].as<std::string>();
 
 int main(int argc, char ** argv)
 {
@@ -44,7 +45,7 @@ int main(int argc, char ** argv)
   ManipulatorInterface manipulator(application.node_, application.move_group_ptr, application.gripper_action_client_ptr, 
                                    application.tf_buffer_ptr);
 
-  ConstantPoseUtils constant_pose_utils(manipulator, pose_from_topic, pose_topic_name, debug);
+  ConstantPoseUtils constant_pose_utils(manipulator, pose_from_topic, pose_topic_name, default_controller, debug);
 
   rclcpp::Duration d = rclcpp::Duration::from_seconds(1.0);
   if(!application.gripper_action_client_ptr->wait_for_action_server(d.to_chrono<std::chrono::duration<double>>())) {
@@ -66,6 +67,7 @@ int main(int argc, char ** argv)
     application.moveit_visual_tools_->deleteAllMarkers();
     success = constant_pose_utils.pickup();
     if (success) RCLCPP_INFO(LOGGER, "Iteration %d successful", iter_count+1);
+    else RCLCPP_INFO(LOGGER, "Iteration %d unsuccessful", iter_count+1);
     iter_count++;
   }
 
