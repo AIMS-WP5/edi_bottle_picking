@@ -30,7 +30,6 @@ ConstantPoseUtils::ConstantPoseUtils(manipulator_interface::ManipulatorInterface
 	sub_dp_exec_done_ = manipulator.node_->create_subscription<std_msgs::msg::Bool>(
 		"dp_exec_done", 10, std::bind(&ConstantPoseUtils::dp_exec_done_callback, this, _1)
 	);
-	dp_exec_successful_ = false;
 }
 
 ConstantPoseUtils::~ConstantPoseUtils()
@@ -243,7 +242,7 @@ bool ConstantPoseUtils::pickup()
 		return 0;
 	}
 
-	success_ = manipulator_.cartesian_goal(pick_poses[1]);
+	success_ = manipulator_.cartesian_goal(pick_poses[1], 15);
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
@@ -261,7 +260,7 @@ bool ConstantPoseUtils::pickup()
 	geometry_msgs::msg::Pose retreat_pose = pick_poses[1];
 	retreat_pose.position.z = retreat_pose.position.z + 0.01;
 
-	success_ = manipulator_.cartesian_goal(retreat_pose);
+	success_ = manipulator_.cartesian_goal(retreat_pose, 10);
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
