@@ -14,7 +14,6 @@ GraspingTestUtils::GraspingTestUtils(manipulator_interface::ManipulatorInterface
 	sub_grasp_pose_ = manipulator.node_->create_subscription<geometry_msgs::msg::PoseStamped>(
 		grasp_pose_topic, 10, std::bind(&GraspingTestUtils::grasp_pose_callback, this, _1)
 	);
-	pub_dp_exec_start_ = manipulator.node_->create_publisher<std_msgs::msg::Empty>("dp_exec_start", 10);
 }
 
 GraspingTestUtils::~GraspingTestUtils()
@@ -137,9 +136,6 @@ bool GraspingTestUtils::pick_up()
 		return 0;
 	}
 
-	if(debug_){
-		manipulator_.world_marker_->prompt("press 'Next' to open the gripper");
-	}
 	success_ = manipulator_.activate_vacuum_gripper(false);
 	if (!success_) {
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
@@ -160,14 +156,10 @@ bool GraspingTestUtils::pick_up()
 	geometry_msgs::msg::PoseStamped grasp_pose_stamped;
 	grasp_pose_stamped.pose = grasp_pose;
 	grasp_pose_stamped.header.frame_id = "realsense_455_on_stand";
-	// geometry_msgs::msg::Pose pick_pose = manipulator_.transform_pose("world", "realsense_455_on_stand", grasp_pose);
 	geometry_msgs::msg::PoseStamped pick_pose_stamped = manipulator_.transform_pose("world", grasp_pose_stamped);
 	geometry_msgs::msg::Pose pick_pose = pick_pose_stamped.pose;
 	manipulator_.world_marker_->publishAxisLabeled(pick_pose, "Object_pose");
 	manipulator_.world_marker_->trigger();
-	if(debug_){
-		manipulator_.world_marker_->prompt("press 'Next' to check pose angle");
-	}
 	pick_pose = check_pose_angle(pick_pose, 0);
 	// manipulator_.world_marker_->deleteAllMarkers();
 	manipulator_.world_marker_->publishAxisLabeled(pick_pose, "Corrected_object_pose");
@@ -228,56 +220,7 @@ bool GraspingTestUtils::pick_up()
 		return 0;
 	}
 
-	if(debug_){
-		manipulator_.world_marker_->prompt("press 'Next' to move back above box");
-	}
 	success_ = manipulator_.predefined_pose("above_box_1");
-	if(!success_){
-		RCLCPP_ERROR(LOGGER, "Pick action failed!");
-		return 0;
-	}
-
-	if(debug_){
-		manipulator_.world_marker_->prompt("press 'Next' to move to ai start");
-	}
-	success_ = manipulator_.predefined_pose("ai_start2");
-	if(!success_){
-		RCLCPP_ERROR(LOGGER, "Pick action failed!");
-		return 0;
-	}
-
-	if(debug_){
-		manipulator_.world_marker_->prompt("press 'Next' to switch controllers");
-	}
-	success_ = switch_controllers("forward_velocity_controller", "scaled_joint_trajectory_controller");
-	// success_ = switch_controllers("forward_velocity_controller", "joint_trajectory_controller");
-
-	if(debug_){
-		manipulator_.world_marker_->prompt("press 'Next' to start DP control");
-	}
-	auto start_msg = std_msgs::msg::Empty();
-	pub_dp_exec_start_->publish(start_msg);
-
-	if(debug_){
-		manipulator_.world_marker_->prompt("press 'Next' to release bottle");
-	}
-	success_ = manipulator_.activate_vacuum_gripper(false);
-	if (!success_) {
-		RCLCPP_ERROR(LOGGER, "Pick action failed!");
-		return 0;
-	} else {
-		RCLCPP_INFO(LOGGER, "Suction disabled!");
-	}
-
-	if(debug_){
-		manipulator_.world_marker_->prompt("press 'Next' to switch controllers back");
-	}
-	success_ = switch_controllers("scaled_joint_trajectory_controller", "forward_velocity_controller");
-
-	if(debug_){
-		manipulator_.world_marker_->prompt("press 'Next' to move back to starting position");
-	}
-	success_ = manipulator_.predefined_pose("wait_slam");
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
@@ -290,6 +233,11 @@ bool GraspingTestUtils::put_down()
 {
 	if(debug_){
 		manipulator_.world_marker_->prompt("press 'Next' to drop off grasped bottle");
+	}
+	success_ = manipulator_.predefined_pose("wait_slam");
+	if(!success_){
+		RCLCPP_ERROR(LOGGER, "Putting back failed!");
+		return 0;
 	}
 	success_ = manipulator_.predefined_pose("inter_floor_4");
 	if(!success_){
@@ -355,48 +303,6 @@ bool GraspingTestUtils::get_grasped_status(int timeout_sec)
 		}
 	}
 	return pin17_state;
-}
-
-bool GraspingTestUtils::switch_controllers(std::string start_ctrl_name, std::string stop_ctrl_name)
-{
-    auto node = std::make_shared<rclcpp::Node>("tmp_controller_switch_node");
-    auto client = node->create_client<controller_manager_msgs::srv::SwitchController>("/controller_manager/switch_controller");
-
-    // Wait for service
-    while (!client->wait_for_service(std::chrono::seconds(2))) {
-        RCLCPP_WARN(LOGGER, "Waiting for /controller_manager/switch_controller service...");
-    }
-
-    auto request = std::make_shared<controller_manager_msgs::srv::SwitchController::Request>();
-
-	std::vector<std::string> start_controllers = {start_ctrl_name};
-    std::vector<std::string> stop_controllers = {stop_ctrl_name};
-    request->activate_controllers = start_controllers;
-    request->deactivate_controllers = stop_controllers;
-    request->strictness = controller_manager_msgs::srv::SwitchController::Request::STRICT;
-    request->activate_asap = true;
-
-    builtin_interfaces::msg::Duration timeout;
-    timeout.sec = 5;
-    timeout.nanosec = 0;
-    request->timeout = timeout;
-
-    auto future = client->async_send_request(request);
-    auto result = rclcpp::spin_until_future_complete(node, future);
-
-    if (result != rclcpp::FutureReturnCode::SUCCESS) {
-        RCLCPP_ERROR(LOGGER, "Failed to call /controller_manager/switch_controller");
-        return false;
-    }
-
-    // Get service response
-    auto response = future.get();
-    if (response->ok) {
-        RCLCPP_INFO(LOGGER, "Controller switch successful");
-        return true;
-    }
-    RCLCPP_ERROR(LOGGER, "Controller switch failed");
-    return false;
 }
 
 } // namespace grasping_test_utils

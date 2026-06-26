@@ -55,7 +55,6 @@ ament_target_dependencies(
   edi_robot_msgs
   ur_msgs
   yaml-cpp
-  controller_manager_msgs
 )
 
 add_executable(constant_pose src/constant_pose.cpp
