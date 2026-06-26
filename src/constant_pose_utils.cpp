@@ -30,6 +30,7 @@ ConstantPoseUtils::ConstantPoseUtils(manipulator_interface::ManipulatorInterface
 	sub_dp_exec_done_ = manipulator.node_->create_subscription<std_msgs::msg::Bool>(
 		"dp_exec_done", 10, std::bind(&ConstantPoseUtils::dp_exec_done_callback, this, _1)
 	);
+	pub_can_update_socket_ = manipulator.node_->create_publisher<std_msgs::msg::Bool>("can_update_socket", 10);
 }
 
 ConstantPoseUtils::~ConstantPoseUtils()
@@ -171,6 +172,10 @@ bool ConstantPoseUtils::pickup()
 		return 0;
 	}
 
+	auto socket_upd_msg = std_msgs::msg::Bool();
+	socket_upd_msg.data = false;
+	pub_can_update_socket_->publish(socket_upd_msg);
+
 	if(debug_){
 		manipulator_.world_marker_->prompt("press 'Next' to move above socket");
 	}
@@ -198,6 +203,8 @@ bool ConstantPoseUtils::pickup()
 
 	RCLCPP_INFO(LOGGER, "DP execution finished.");
 	switch_controllers(default_controller_, "forward_velocity_controller");
+	socket_upd_msg.data = true;
+	pub_can_update_socket_->publish(socket_upd_msg);
 
 	if (insertion_successful_) {
 		RCLCPP_INFO(LOGGER, "DP trajectory successful");

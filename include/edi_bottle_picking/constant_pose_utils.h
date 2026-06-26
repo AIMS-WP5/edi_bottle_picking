@@ -40,6 +40,7 @@ namespace constant_pose_utils
         geometry_msgs::msg::Pose curr_grasp_pose_;
         rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr pub_dp_exec_start_;
         rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr sub_dp_exec_done_;
+        rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr pub_can_update_socket_;
         std::string default_controller_;
 	};
 
