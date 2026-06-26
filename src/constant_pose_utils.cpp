@@ -202,7 +202,6 @@ bool ConstantPoseUtils::pickup()
 	if (insertion_successful_) {
 		RCLCPP_INFO(LOGGER, "DP trajectory successful");
 		manipulator_.activate_vacuum_gripper(false); // release bottle
-		manipulator_.detach_collision_object();
 		if(debug_){
 			manipulator_.world_marker_->prompt("press 'Next' to go back");
 		}
