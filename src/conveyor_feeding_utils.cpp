@@ -15,6 +15,9 @@ ConveyorFeedingUtils::ConveyorFeedingUtils(manipulator_interface::ManipulatorInt
 		grasp_pose_topic, 10, std::bind(&ConveyorFeedingUtils::grasp_pose_callback, this, _1)
 	);
 	pub_dp_exec_start_ = manipulator.node_->create_publisher<std_msgs::msg::Empty>("dp_exec_start", 10);
+	sub_dp_exec_done_ = manipulator.node_->create_subscription<std_msgs::msg::Bool>(
+		"dp_exec_done", 10, std::bind(&ConveyorFeedingUtils::dp_exec_done_callback, this, _1)
+	);
 }
 
 ConveyorFeedingUtils::~ConveyorFeedingUtils()
@@ -255,33 +258,53 @@ bool ConveyorFeedingUtils::run()
 	if(debug_){
 		manipulator_.world_marker_->prompt("press 'Next' to start DP control");
 	}
+	insertion_finished_ = false;
 	auto start_msg = std_msgs::msg::Empty();
 	pub_dp_exec_start_->publish(start_msg);
-	RCLCPP_INFO(LOGGER, "Wait while DP execution finishes.");
 
-	if(debug_){
-		manipulator_.world_marker_->prompt("press 'Next' to switch controllers back");
+	while(!insertion_finished_) {
+		std::this_thread::sleep_for(100ms);
 	}
+
+	RCLCPP_INFO(LOGGER, "DP execution finished.");
 	success_ = switch_controllers(default_controller_, "forward_velocity_controller");
 
-	if(debug_){
-		manipulator_.world_marker_->prompt("press 'Next' to move back");
-	}
-	success_ = manipulator_.predefined_pose("ai_start2");
-	if(!success_){
-		RCLCPP_ERROR(LOGGER, "Pick action failed!");
-		return 0;
-	}
-	if(debug_){
-		manipulator_.world_marker_->prompt("press 'Next' to move back");
-	}
-	success_ = manipulator_.predefined_pose("ai_after_pickup");
-	if(!success_){
-		RCLCPP_ERROR(LOGGER, "Pick action failed!");
-		return 0;
+	if (insertion_successful_) {
+		RCLCPP_INFO(LOGGER, "DP trajectory successful");
+		manipulator_.activate_vacuum_gripper(false); // release bottle
+		if(debug_){
+			manipulator_.world_marker_->prompt("press 'Next' to move back");
+		}
+		success_ = manipulator_.predefined_pose("ai_start2");
+		if(!success_){
+			RCLCPP_ERROR(LOGGER, "Pick action failed!");
+			return 0;
+		}
+		if(debug_){
+			manipulator_.world_marker_->prompt("press 'Next' to move back");
+		}
+		success_ = manipulator_.predefined_pose("ai_after_pickup");
+		if(!success_){
+			RCLCPP_ERROR(LOGGER, "Pick action failed!");
+			return 0;
+		}
+
+		return true;
 	}
 
-	return true;
+	//unsuccessful insertion
+	if(debug_){
+		manipulator_.world_marker_->prompt("press 'Next' to move back");
+	}
+	manipulator_.predefined_pose("ai_start2");
+	manipulator_.predefined_pose("ai_after_pickup");
+	if(debug_){
+		manipulator_.world_marker_->prompt("press 'Next' to drop off bottle");
+	}
+	manipulator_.predefined_pose("inter_floor_4");
+	manipulator_.activate_vacuum_gripper(false);
+
+	return false;
 }
 
 geometry_msgs::msg::Pose ConveyorFeedingUtils::get_curr_grasp_pose()
@@ -375,6 +398,12 @@ bool ConveyorFeedingUtils::switch_controllers(std::string start_ctrl_name, std::
     }
     RCLCPP_ERROR(LOGGER, "Controller switch failed");
     return false;
+}
+
+void ConveyorFeedingUtils::dp_exec_done_callback(const std_msgs::msg::Bool::SharedPtr msg)
+{
+	insertion_finished_ = true;
+	insertion_successful_ = msg->data;
 }
 
 } // namespace conveyor_feeding_utils
