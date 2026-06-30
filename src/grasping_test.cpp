@@ -60,18 +60,22 @@ int main(int argc, char ** argv)
 
   bool success;
   int iter_count = 0;
+  int success_count = 0;
 
   while((iter_count < total_iterations) && rclcpp::ok() && !sigint_received)
   {
-    RCLCPP_INFO(LOGGER, "Starting iteration %d out of %d", iter_count+1, total_iterations);
+    iter_count++;
+    RCLCPP_INFO(LOGGER, "Starting iteration %d out of %d", iter_count, total_iterations);
     application.moveit_visual_tools_->deleteAllMarkers();
     success = grasping_test_utils.pick_up();
     if (success){
+        success_count++;
         grasping_test_utils.put_down();
     }
-    iter_count++;
+    RCLCPP_INFO(LOGGER, "Current success rate: %d/%d (%.2f%%)", success_count, iter_count, (100.0 * success_count/iter_count));
   }
 
+  RCLCPP_INFO(LOGGER, "Total success rate: %d/%d (%.2f%%)", success_count, iter_count, (100.0 * success_count/iter_count));
   rclcpp::shutdown();
 
   return 0;
