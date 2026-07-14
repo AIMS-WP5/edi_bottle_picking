@@ -11,6 +11,7 @@ def generate_launch_description():
     iterations = LaunchConfiguration("iterations")
     insertion_mode = LaunchConfiguration("insertion_mode")
     planning_pipeline = LaunchConfiguration("planning_pipeline")
+    retime_plans = LaunchConfiguration("retime_plans")
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -56,6 +57,15 @@ def generate_launch_description():
                         "edi_ur_moveit.launch.py and a running cumotion_planner_node). "
                         "Orthogonal to insertion_mode; Cartesian segments are unaffected.",
         ),
+        DeclareLaunchArgument(
+            "retime_plans",
+            default_value="true",
+            description="true (default): TOTG re-times every plan (sim-gated 0.2 scaling). "
+                        "false: keep the planner's own time parameterization -- with "
+                        "planning_pipeline=isaac_ros_cumotion this executes cuMotion's "
+                        "jerk-limited timing directly (scale it via the cumotion node's "
+                        "time_dilation_factor). A/B knob for the planner comparison.",
+        ),
         # Start the actual move_group node/action server
         Node(
             package="edi_bottle_picking",
@@ -68,6 +78,7 @@ def generate_launch_description():
                 "iterations": ParameterValue(iterations, value_type=int),
                 "insertion_mode": ParameterValue(insertion_mode, value_type=str),
                 "planning_pipeline": ParameterValue(planning_pipeline, value_type=str),
+                "retime_plans": ParameterValue(retime_plans, value_type=bool),
             }],
         ),
     ])

@@ -79,6 +79,12 @@ INSERTION_MODE="dp"
 # Planning pipeline for the task's free-space moves: "ompl" (default, unchanged behavior) or
 # "cumotion" (NVIDIA isaac_ros_cumotion via the move_group pipeline; see --planner note above).
 PLANNER="ompl"
+# A/B knobs for the cuMotion comparison: --retime-plans false executes the planner's own
+# time parameterization (cuMotion: jerk-limited) instead of TOTG; --time-dilation scales
+# cuMotion's native timing (only meaningful with --retime-plans false; ~0.2 matches the
+# sim-gated TOTG scaling).
+RETIME_PLANS="true"
+TIME_DILATION="0.5"
 RUN_PICK=1
 ATTACH=1
 # Optional stand-in vision publisher on /best_grasp. Disabled by default: the Isaac
@@ -118,6 +124,8 @@ while [[ $# -gt 0 ]]; do
         --bottle-picking-iterations) BOTTLE_PICKING_ITERATIONS="$2"; shift 2;;
         --insertion-mode)   INSERTION_MODE="$2"; shift 2;;
         --planner)          PLANNER="$2"; shift 2;;
+        --retime-plans)     RETIME_PLANS="$2"; shift 2;;
+        --time-dilation)    TIME_DILATION="$2"; shift 2;;
         -h|--help)          awk 'NR>1 && /^#/{sub(/^# ?/,""); print; next} NR>1{exit}' "$0"; exit 0;;
         *) echo "unknown arg: $1 (try --help)" >&2; exit 1;;
     esac
@@ -199,19 +207,15 @@ if [[ "$INSERTION_MODE" == "moveit" ]]; then
     fi
 else
     echo "== phase 2: DP node ($MODEL_NAME, steps=$STEP_COUNT)$( ((RUN_BESTGRASP)) && echo ' + grasp stand-in') =="
-    newwin dp        "ros2 launch diff_physics launch.yaml model_run:=true model_name:=$MODEL_NAME step_count:=$STEP_COUNT collision_check:=$COLLISION_CHECK max_velocity:=$MAX_VELOCITY use_sim_time:=true"
-    if [[ "$PLANNER" == "cumotion" ]]; then
-        echo "   NOTE: dp mode's diff_physics launch runs add_pad WITHOUT pad_as_marker; cuMotion"
-        echo "         plans near the pad may be rejected. Prefer --insertion-mode moveit with"
-        echo "         --planner cumotion until diff_physics launch.yaml forwards pad_as_marker."
-    fi
+    PAD_AS_MARKER=$( [[ "$PLANNER" == "cumotion" ]] && echo "true" || echo "false" )
+    newwin dp        "ros2 launch diff_physics launch.yaml model_run:=true model_name:=$MODEL_NAME step_count:=$STEP_COUNT collision_check:=$COLLISION_CHECK max_velocity:=$MAX_VELOCITY use_sim_time:=true pad_as_marker:=$PAD_AS_MARKER"
 fi
 
 # cuMotion planner node (exactly ONE instance). Started before the pick so the readiness
 # poll below can gate conveyor_feeding on the action server.
 if [[ "$PLANNER" == "cumotion" ]]; then
     echo "== phase 2b: cuMotion planner node =="
-    newwin cumotion "ros2 launch edi_moveit_config cumotion_planner.launch.py use_sim_time:=true"
+    newwin cumotion "ros2 launch edi_moveit_config cumotion_planner.launch.py use_sim_time:=true time_dilation_factor:=$TIME_DILATION"
     # First start after a torch/driver change re-JITs curobo's CUDA kernels (~4 min);
     # normally ready in ~30 s (log line: 'cuMotion is ready for planning queries!').
     wait_for "cumotion/move_group action" "ros2 action list 2>/dev/null | grep -q cumotion/move_group" 300
@@ -228,7 +232,7 @@ if (( RUN_PICK )); then
     # before run_dp_segment() reads it. (The old /object_point wait was a stale check -- that
     # topic was renamed to /socket_center -- so it always burned its full 60 s timeout.)
     echo "== phase 3: pick (conveyor_feeding, insertion_mode=$INSERTION_MODE) =="
-    newwin pick "ros2 launch edi_bottle_picking conveyor_feeding.launch.py use_sim_time:=true debug:=$DEBUG iterations:=$BOTTLE_PICKING_ITERATIONS insertion_mode:=$INSERTION_MODE planning_pipeline:=$PLANNING_PIPELINE"
+    newwin pick "ros2 launch edi_bottle_picking conveyor_feeding.launch.py use_sim_time:=true debug:=$DEBUG iterations:=$BOTTLE_PICKING_ITERATIONS insertion_mode:=$INSERTION_MODE planning_pipeline:=$PLANNING_PIPELINE retime_plans:=$RETIME_PLANS"
     # manipulator_interface::cartesian_goal() has an UNCONDITIONAL world_marker_->prompt() before
     # executing the cartesian plan (not gated by our debug flag). In no-debug mode, put
     # rviz_visual_tools into autonomous mode -- the GUI 'Continue' button = buttons[2] on

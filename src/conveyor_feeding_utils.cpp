@@ -461,7 +461,15 @@ bool ConveyorFeedingUtils::run()
 	}
 
 	maybe_prompt("press 'Next' to move to ai start");
-	success_ = manipulator_.predefined_pose("ai_start2");
+	{
+		// Pin the ai_start2 handoff to OMPL (see PipelineScope). ai_start2 is a named JOINT
+		// target and the segment that follows is start-configuration-sensitive: the DP policy
+		// was trained from the canonical ai_start2 configuration (iteration-8 matrix: cuMotion's
+		// IK-re-solved arrival put cumotion x dp placements ~13 cm off), and in moveit mode this
+		// config seeds the insertion IK. OMPL executes the exact joint target.
+		PipelineScope dp_handoff_scope{manipulator_, "ompl"};
+		success_ = manipulator_.predefined_pose("ai_start2");
+	}
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		safe_retreat();
