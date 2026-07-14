@@ -11,7 +11,7 @@
 #   bringup_sim_stack.sh [--model NAME] [--steps N] [--collision-check true|false]
 #                        [--max-velocity RAD_S] [--gripper TYPE] [--no-pick] [--no-attach]
 #                        [--best-grasp] [--debug|--no-debug] [--bottle-picking-iterations N]
-#                        [--insertion-mode dp|moveit]
+#                        [--insertion-mode dp|moveit] [--planner ompl|cumotion]
 #   bringup_sim_stack.sh down            # Ctrl-C every node and kill the tmux session
 #
 # Examples:
@@ -22,6 +22,17 @@
 #   bringup_sim_stack.sh --bottle-picking-iterations 5             # run only 5 pick/insert cycles
 #   bringup_sim_stack.sh --insertion-mode moveit                   # MoveIt comparison insert (no DP node)
 #   bringup_sim_stack.sh down
+#
+# --planner cumotion: route the task's free-space joint-space planning through NVIDIA cuMotion
+# (GPU) instead of OMPL. Adds a 'cumotion' window (cumotion_planner_node via
+# edi_moveit_config/cumotion_planner.launch.py), starts move_group with use_cumotion:=true,
+# runs add_pad with pad_as_marker:=true (cuMotion mirrors the world without the ACM, so the
+# pad must not be a scene object), and passes planning_pipeline:=isaac_ros_cumotion to
+# conveyor_feeding. The pick / retreat / insertion segments still pin themselves to OMPL
+# (near-contact start states + exact-branch joint goals; see conveyor_feeding_utils
+# PipelineScope). There is deliberately NO --insertion-mode cumotion: planner choice is
+# orthogonal to insertion strategy. NB: the first cumotion start after a torch/driver change
+# re-JITs CUDA kernels (~4 min) -- the readiness wait tolerates it.
 #
 # --insertion-mode moveit: run the MoveIt comparison test instead of the DP velocity segment.
 # The DP node is NOT launched (the insertion is MoveIt position-controlled + a Cartesian
@@ -65,6 +76,9 @@ BOTTLE_PICKING_ITERATIONS="-1"
 # "moveit" = comparison test (MoveIt above-socket move + Cartesian descent). In "moveit" the DP
 # node is skipped and a reminder to start Isaac with --pad-adj-x 0 --pad-adj-y 0 is printed.
 INSERTION_MODE="dp"
+# Planning pipeline for the task's free-space moves: "ompl" (default, unchanged behavior) or
+# "cumotion" (NVIDIA isaac_ros_cumotion via the move_group pipeline; see --planner note above).
+PLANNER="ompl"
 RUN_PICK=1
 ATTACH=1
 # Optional stand-in vision publisher on /best_grasp. Disabled by default: the Isaac
@@ -103,6 +117,7 @@ while [[ $# -gt 0 ]]; do
         --no-debug)         DEBUG="false"; shift;;
         --bottle-picking-iterations) BOTTLE_PICKING_ITERATIONS="$2"; shift 2;;
         --insertion-mode)   INSERTION_MODE="$2"; shift 2;;
+        --planner)          PLANNER="$2"; shift 2;;
         -h|--help)          awk 'NR>1 && /^#/{sub(/^# ?/,""); print; next} NR>1{exit}' "$0"; exit 0;;
         *) echo "unknown arg: $1 (try --help)" >&2; exit 1;;
     esac
@@ -111,6 +126,11 @@ done
 case "$INSERTION_MODE" in
     dp|moveit) ;;
     *) echo "invalid --insertion-mode '$INSERTION_MODE' (expected: dp | moveit)" >&2; exit 1;;
+esac
+case "$PLANNER" in
+    ompl) USE_CUMOTION="false"; PLANNING_PIPELINE="ompl";;
+    cumotion) USE_CUMOTION="true"; PLANNING_PIPELINE="isaac_ros_cumotion";;
+    *) echo "invalid --planner '$PLANNER' (expected: ompl | cumotion)" >&2; exit 1;;
 esac
 
 command -v tmux >/dev/null || { echo "tmux not installed -> sudo apt install tmux" >&2; exit 1; }
@@ -156,7 +176,7 @@ tmux kill-session -t "$SESSION" 2>/dev/null || true
 
 echo "== phase 1: control + MoveIt + bridges =="
 newwin control   "ros2 launch edi_moveit_config edi_ur_control.launch.py ur_type:=ur5e sim_isaac:=true gripper_type:=$GRIPPER_TYPE use_sim_time:=true initial_joint_controller:=joint_trajectory_controller"
-newwin moveit    "ros2 launch edi_moveit_config edi_ur_moveit.launch.py ur_type:=ur5e sim_isaac:=true gripper_type:=$GRIPPER_TYPE use_sim_time:=true launch_rviz:=true"
+newwin moveit    "ros2 launch edi_moveit_config edi_ur_moveit.launch.py ur_type:=ur5e sim_isaac:=true gripper_type:=$GRIPPER_TYPE use_sim_time:=true launch_rviz:=true use_cumotion:=$USE_CUMOTION"
 newwin velbridge "ros2 launch edi_bottle_picking velocity_mode_bridge.launch.py"
 newwin vacbridge "ros2 launch edi_bottle_picking vacuum_gripper_bridge.launch.py"
 
@@ -170,10 +190,31 @@ wait_for "move_group"  "ros2 node list 2>/dev/null | grep -q /move_group" 90
 # without it MoveIt routes the arm through the empty workspace and plans long twist-around paths.
 if [[ "$INSERTION_MODE" == "moveit" ]]; then
     echo "== phase 2: DP node SKIPPED (insertion_mode=moveit); running add_pad for workspace collision =="
-    newwin padframe  "ros2 run diff_physics add_pad --ros-args -p use_sim_time:=true"
+    # With cuMotion, the pad must be an RViz marker, not a scene object (cuMotion mirrors the
+    # world without the ACM, so a pad object at the socket target blocks every nearby plan).
+    if [[ "$PLANNER" == "cumotion" ]]; then
+        newwin padframe  "ros2 run diff_physics add_pad --ros-args -p use_sim_time:=true -p pad_as_marker:=true"
+    else
+        newwin padframe  "ros2 run diff_physics add_pad --ros-args -p use_sim_time:=true"
+    fi
 else
     echo "== phase 2: DP node ($MODEL_NAME, steps=$STEP_COUNT)$( ((RUN_BESTGRASP)) && echo ' + grasp stand-in') =="
     newwin dp        "ros2 launch diff_physics launch.yaml model_run:=true model_name:=$MODEL_NAME step_count:=$STEP_COUNT collision_check:=$COLLISION_CHECK max_velocity:=$MAX_VELOCITY use_sim_time:=true"
+    if [[ "$PLANNER" == "cumotion" ]]; then
+        echo "   NOTE: dp mode's diff_physics launch runs add_pad WITHOUT pad_as_marker; cuMotion"
+        echo "         plans near the pad may be rejected. Prefer --insertion-mode moveit with"
+        echo "         --planner cumotion until diff_physics launch.yaml forwards pad_as_marker."
+    fi
+fi
+
+# cuMotion planner node (exactly ONE instance). Started before the pick so the readiness
+# poll below can gate conveyor_feeding on the action server.
+if [[ "$PLANNER" == "cumotion" ]]; then
+    echo "== phase 2b: cuMotion planner node =="
+    newwin cumotion "ros2 launch edi_moveit_config cumotion_planner.launch.py use_sim_time:=true"
+    # First start after a torch/driver change re-JITs curobo's CUDA kernels (~4 min);
+    # normally ready in ~30 s (log line: 'cuMotion is ready for planning queries!').
+    wait_for "cumotion/move_group action" "ros2 action list 2>/dev/null | grep -q cumotion/move_group" 300
 fi
 # /best_grasp is normally published by the Isaac OmniGraph (per-bottle grasp poses); the
 # stand-in below would be a SECOND publisher on the same topic, so it's opt-in (--best-grasp).
@@ -187,7 +228,7 @@ if (( RUN_PICK )); then
     # before run_dp_segment() reads it. (The old /object_point wait was a stale check -- that
     # topic was renamed to /socket_center -- so it always burned its full 60 s timeout.)
     echo "== phase 3: pick (conveyor_feeding, insertion_mode=$INSERTION_MODE) =="
-    newwin pick "ros2 launch edi_bottle_picking conveyor_feeding.launch.py use_sim_time:=true debug:=$DEBUG iterations:=$BOTTLE_PICKING_ITERATIONS insertion_mode:=$INSERTION_MODE"
+    newwin pick "ros2 launch edi_bottle_picking conveyor_feeding.launch.py use_sim_time:=true debug:=$DEBUG iterations:=$BOTTLE_PICKING_ITERATIONS insertion_mode:=$INSERTION_MODE planning_pipeline:=$PLANNING_PIPELINE"
     # manipulator_interface::cartesian_goal() has an UNCONDITIONAL world_marker_->prompt() before
     # executing the cartesian plan (not gated by our debug flag). In no-debug mode, put
     # rviz_visual_tools into autonomous mode -- the GUI 'Continue' button = buttons[2] on
@@ -202,8 +243,8 @@ fi
 echo
 if [[ "$BOTTLE_PICKING_ITERATIONS" == "-1" ]]; then ITERS_DISP="config default"; else ITERS_DISP="$BOTTLE_PICKING_ITERATIONS"; fi
 echo "tmux session '$SESSION' is up."
-echo "  insertion_mode=$INSERTION_MODE  model=$MODEL_NAME  steps=$STEP_COUNT  collision_check=$COLLISION_CHECK  max_velocity=$MAX_VELOCITY  gripper=$GRIPPER_TYPE  debug=$DEBUG  bottle_picking_iterations=$ITERS_DISP"
-echo "  windows: control moveit velbridge vacbridge$( [[ $INSERTION_MODE == moveit ]] && echo ' padframe' || echo ' dp')$( ((RUN_BESTGRASP)) && echo ' bestgrasp')$( ((RUN_PICK)) && echo ' pick')$( ((RUN_PICK)) && [[ $DEBUG == false ]] && echo ' autocont')"
+echo "  insertion_mode=$INSERTION_MODE  planner=$PLANNER  model=$MODEL_NAME  steps=$STEP_COUNT  collision_check=$COLLISION_CHECK  max_velocity=$MAX_VELOCITY  gripper=$GRIPPER_TYPE  debug=$DEBUG  bottle_picking_iterations=$ITERS_DISP"
+echo "  windows: control moveit velbridge vacbridge$( [[ $INSERTION_MODE == moveit ]] && echo ' padframe' || echo ' dp')$( [[ $PLANNER == cumotion ]] && echo ' cumotion')$( ((RUN_BESTGRASP)) && echo ' bestgrasp')$( ((RUN_PICK)) && echo ' pick')$( ((RUN_PICK)) && [[ $DEBUG == false ]] && echo ' autocont')"
 if [[ "$INSERTION_MODE" == "moveit" ]]; then
     echo "  NOTE: MoveIt comparison mode -- DP node not launched. For a clean comparison start Isaac with:"
     echo "        python simplified_ur5_scene.py --omnigraph --pad-adj-x 0 --pad-adj-y 0"
