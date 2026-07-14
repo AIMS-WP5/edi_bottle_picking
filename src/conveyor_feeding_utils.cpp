@@ -18,6 +18,31 @@ static constexpr double SAFE_LIFT_M = 0.20;
 static constexpr double DESCENT_SHALLOW_STEP_M = 0.002;  // 2 mm increments
 static constexpr double DESCENT_MAX_SHALLOW_M  = 0.010;  // up to 10 mm short of full depth
 
+// Arm joint order used for /compute_ik seeds/solutions and descent pre-validation.
+static const std::vector<std::string> ARM_JOINTS = {
+	"shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint",
+	"wrist_1_joint", "wrist_2_joint", "wrist_3_joint"};
+
+// Scoped planning-pipeline pin (RAII: previous pipeline restored on every exit path).
+// Precision segments that operate at near-contact -- the pick inside the bottle box, the
+// insertion above the socket -- must plan via OMPL even when the task-level
+// planning_pipeline is cuMotion (2026-07-14 findings):
+//  - the cuMotion planner node re-solves IK even for joint targets, so it may arrive in a
+//    different (descent-hostile) arm basin than the seeded-IK config the guards validated;
+//  - curobo validates START states against the mirrored world with sphere buffers +
+//    activation margin, so any config at near-contact (tool tip at a bottle inside the box
+//    walls) hard-fails INVALID_START_STATE_WORLD_COLLISION and wedges recovery.
+// cuMotion keeps the long free-space moves (wait/above-box/transfers), where those
+// properties are harmless. Mirrors the hybrid planned/reactive split robo-codegen-edi
+// converged on for the same robot.
+struct PipelineScope {
+	manipulator_interface::ManipulatorInterface &m;
+	std::string prev;
+	PipelineScope(manipulator_interface::ManipulatorInterface &mi, const std::string &pipeline)
+	    : m(mi), prev(mi.set_planning_pipeline(pipeline)) {}
+	~PipelineScope() { m.set_planning_pipeline(prev); }
+};
+
 ConveyorFeedingUtils::ConveyorFeedingUtils(manipulator_interface::ManipulatorInterface& manipulator, std::string grasp_pose_topic, std::string default_controller, bool debug, bool is_isaac, int max_pick_attempts,
     std::string insertion_mode, std::string socket_pose_topic, std::array<double, 3> moveit_insert_offset, double moveit_insert_above_dz,
     std::array<double, 4> moveit_insert_orientation, bool moveit_insert_descent_collision_check,
@@ -247,6 +272,11 @@ geometry_msgs::msg::Pose ConveyorFeedingUtils::check_pose_angle(geometry_msgs::m
 
 bool ConveyorFeedingUtils::try_pick_bottle()
 {
+	// Pin the pick sequence to OMPL (see PipelineScope): the approach ends at near-contact with
+	// the bottle inside the box walls, where cuMotion's buffered start-state validation rejects
+	// every subsequent plan (INVALID_START_STATE_WORLD_COLLISION) until the arm has left the box.
+	PipelineScope pipeline_scope{manipulator_, "ompl"};
+
 	// Clean slate. The grasped-bottle collision object (id "object", added by
 	// add_collision_object_simple and attached to virtual_ee_link) is created every cycle but
 	// run() never detached/removed it, so stale attached bodies accumulated in the planning
@@ -288,8 +318,14 @@ bool ConveyorFeedingUtils::try_pick_bottle()
 	manipulator_.world_marker_->publishAxisLabeled(pick_pose, "Corrected_object_pose");
 	manipulator_.world_marker_->trigger();
 
+	// Build the grasped-bottle collision object for the post-grasp ATTACH, but do NOT add it
+	// to the planning-scene world during the approach: the approach pose ends at its surface,
+	// and cuMotion (which mirrors the world without the ACM and demands buffer clearance)
+	// rejects every approach IK against it (MotionGenStatus.IK_FAIL, observed 2026-07-14).
+	// MoveIt/OMPL never needed it either -- the object's only prior role was approach-path
+	// protection, and it has a history of causing planning conflicts (see detach note above).
 	moveit_msgs::msg::CollisionObject coll_obj;
-	success_ = manipulator_.add_collision_object_simple(pick_pose, "world", coll_obj);
+	success_ = manipulator_.add_collision_object_simple(pick_pose, "world", coll_obj, /*apply_to_world=*/false);
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
@@ -502,6 +538,10 @@ bool ConveyorFeedingUtils::run()
 
 bool ConveyorFeedingUtils::safe_retreat()
 {
+	// Recovery may start from a near-contact config (inside the box / at the socket), where
+	// cuMotion rejects the start state outright -- recover via OMPL (see PipelineScope).
+	PipelineScope pipeline_scope{manipulator_, "ompl"};
+
 	// Best-effort recovery to a safe, plannable pose after a failed pick/place. Release and
 	// detach any partial grasp, LIFT STRAIGHT UP out of the box (a vertical Cartesian move -- a
 	// joint-space plan from inside the box would arc the tool out through a wall and fail), then
@@ -527,20 +567,23 @@ bool ConveyorFeedingUtils::safe_retreat()
 }
 
 std::optional<std::vector<double>> ConveyorFeedingUtils::compute_ik_seeded(
-	const geometry_msgs::msg::Pose& target, double max_seed_delta, bool ignore_wrist)
+	const geometry_msgs::msg::Pose& target, double max_seed_delta, bool ignore_wrist,
+	const std::optional<std::vector<double>>& explicit_seed)
 {
-	static const std::vector<std::string> arm_joints = {
-		"shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint",
-		"wrist_1_joint", "wrist_2_joint", "wrist_3_joint"};
+	const std::vector<std::string>& arm_joints = ARM_JOINTS;
 	if (!ik_client_->wait_for_service(std::chrono::seconds(2))) {
 		RCLCPP_ERROR(LOGGER, "compute_ik_seeded: /compute_ik service not available");
 		return std::nullopt;
 	}
 
-	// The arm's ACTUAL current config: seeds IK (attempt 1) and is the reference for both the
-	// 2*pi normalization and the branch check (how far the returned solution is from where the
-	// arm is). Seeding from it returns the branch nearest the current pose (a short, natural move).
-	const std::vector<double> cur = manipulator_.current_joint_values();
+	// The seed config: normally the arm's ACTUAL current config -- seeds IK (attempt 1) and is
+	// the reference for both the 2*pi normalization and the branch check (how far the returned
+	// solution is from where the arm is), so IK returns the branch nearest the current pose (a
+	// short, natural move). An explicit_seed overrides it to steer IK into a KNOWN-GOOD basin
+	// when the current config itself is in a hostile one (e.g. a wrapped-wrist arrival after a
+	// cuMotion transfer): the solution is then near the explicit seed instead of the arm.
+	const std::vector<double> cur = explicit_seed.has_value() ? *explicit_seed
+	                                                          : manipulator_.current_joint_values();
 	std::vector<double> ik_seed = cur;
 	// Branch check runs when max_seed_delta > 0. Two flavours:
 	//  - insert (ignore_wrist=false): fixed orientation, so ANY large delta is a bad branch; the
@@ -653,6 +696,12 @@ std::optional<bool> ConveyorFeedingUtils::run_moveit_insert_segment(int socket_t
 	// the controller/driver (stay in joint_trajectory_controller / position control) and never
 	// touch the velocity gains. The bottle stays gripped throughout; run() does the vacuum-off
 	// and detach afterwards, exactly as for the DP path.
+
+	// Pin the WHOLE insertion segment to OMPL (see PipelineScope): the above-socket move must
+	// land in the exact, descent-validated joint configuration, which cuMotion's IK-re-solving
+	// joint-goal handling cannot guarantee.
+	PipelineScope pipeline_scope{manipulator_, "ompl"};
+
 	control_switcher_->freeze_socket();
 
 	// Sample the insertion target (socket centre) from the continuously-latched member
@@ -703,6 +752,41 @@ std::optional<bool> ConveyorFeedingUtils::run_moveit_insert_segment(int socket_t
 	// Primary path: seeded /compute_ik (max_seed_delta=2.0 rejects the flipped-wrist branch,
 	// wrist_3 ~ +4 deg instead of -176 deg) + joint_goal to that explicit joint target.
 	auto above_joints = compute_ik_seeded(above_pose, /*max_seed_delta=*/2.0);
+	// GUARD 2 on the SEEDED path too: a seed-accepted IK branch can still be descent-hostile --
+	// e.g. a wrapped-wrist arrival (wrist_1 ~ -275 deg) whose straight-down descent would sweep
+	// the wrist through the table (observed 2026-07-14 with planning_pipeline=isaac_ros_cumotion:
+	// descent failed even 10 mm shallow and the bottle was released from above_dz). The seed
+	// varies with each bottle's grasp yaw, so any pipeline can draw such a branch. Validate the
+	// descent from the IK config BEFORE executing the move, exactly as the fallback does.
+	auto descent_ok = [&](const std::vector<double> &joints) {
+		return !moveit_insert_validate_descent_ ||
+		       manipulator_.cartesian_descent_feasible(ARM_JOINTS, joints,
+		               above_pose, insert_pose, moveit_insert_descent_collision_check_,
+		               DESCENT_SHALLOW_STEP_M, DESCENT_MAX_SHALLOW_M);
+	};
+	if (above_joints.has_value() && !descent_ok(*above_joints)) {
+		RCLCPP_WARN(LOGGER, "MoveIt insertion: GUARD2 seeded-IK above-config is descent-hostile "
+		            "(straight-down descent unplannable from it); retrying IK from the canonical "
+		            "insert-ready seed");
+		above_joints.reset();
+	}
+	// Second seeded attempt from the CANONICAL insert-ready posture: when the arm's current
+	// config is itself in a hostile basin (a cuMotion transfer may land there), current-seeded
+	// IK can only return that basin. Seeding from the known-descendable above-socket posture
+	// (the natural branch every baseline insertion used; wrist_1 ~ -63 deg, wrist_2 ~ +52 deg)
+	// steers IK back to it. The larger seed delta only bounds the solution's distance from THIS
+	// seed, not from the arm.
+	if (!above_joints.has_value()) {
+		static const std::vector<double> NATURAL_INSERT_SEED = {
+			-1.444, -1.399, 2.497, -1.097, 0.912, -3.076};
+		above_joints = compute_ik_seeded(above_pose, /*max_seed_delta=*/2.0,
+		                                 /*ignore_wrist=*/false, NATURAL_INSERT_SEED);
+		if (above_joints.has_value() && !descent_ok(*above_joints)) {
+			RCLCPP_WARN(LOGGER, "MoveIt insertion: GUARD2 natural-seed above-config also "
+			            "descent-hostile; trying the guarded pose_goal fallback");
+			above_joints.reset();
+		}
+	}
 	bool reached_above = above_joints.has_value() && manipulator_.joint_goal(*above_joints);
 	if (!reached_above) {
 		// Fallback: pose_goal (setPoseTarget + the global OMPL planner). /compute_ik is a local,

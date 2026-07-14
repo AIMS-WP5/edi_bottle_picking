@@ -10,6 +10,7 @@ def generate_launch_description():
     debug = LaunchConfiguration("debug")
     iterations = LaunchConfiguration("iterations")
     insertion_mode = LaunchConfiguration("insertion_mode")
+    planning_pipeline = LaunchConfiguration("planning_pipeline")
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -46,6 +47,15 @@ def generate_launch_description():
                         "socket_center+offset then a straight Cartesian descent (no driver switch, "
                         "no velocity logging). Overrides the YAML 'insertion_mode' value.",
         ),
+        DeclareLaunchArgument(
+            "planning_pipeline",
+            default_value="ompl",
+            description="move_group planning pipeline manipulator_interface routes all "
+                        "joint-space plans through. 'ompl' (default) = existing behavior; "
+                        "'isaac_ros_cumotion' = GPU cuMotion (requires use_cumotion:=true on "
+                        "edi_ur_moveit.launch.py and a running cumotion_planner_node). "
+                        "Orthogonal to insertion_mode; Cartesian segments are unaffected.",
+        ),
         # Start the actual move_group node/action server
         Node(
             package="edi_bottle_picking",
@@ -57,6 +67,7 @@ def generate_launch_description():
                 "debug": ParameterValue(debug, value_type=bool),
                 "iterations": ParameterValue(iterations, value_type=int),
                 "insertion_mode": ParameterValue(insertion_mode, value_type=str),
+                "planning_pipeline": ParameterValue(planning_pipeline, value_type=str),
             }],
         ),
     ])

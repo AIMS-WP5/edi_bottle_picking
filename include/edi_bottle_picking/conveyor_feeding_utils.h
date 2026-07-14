@@ -111,7 +111,8 @@ namespace conveyor_feeding_utils
             \return the 6 arm joint values, or nullopt if IK/service failed. */
         std::optional<std::vector<double>> compute_ik_seeded(const geometry_msgs::msg::Pose& target,
                                                              double max_seed_delta = -1.0,
-                                                             bool ignore_wrist = false);
+                                                             bool ignore_wrist = false,
+                                                             const std::optional<std::vector<double>>& explicit_seed = std::nullopt);
 
         manipulator_interface::ManipulatorInterface& manipulator_;
         std::atomic<bool> debug_;                 // live-toggled via /conveyor_feeding/debug
