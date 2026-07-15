@@ -12,6 +12,7 @@ def generate_launch_description():
     insertion_mode = LaunchConfiguration("insertion_mode")
     planning_pipeline = LaunchConfiguration("planning_pipeline")
     retime_plans = LaunchConfiguration("retime_plans")
+    grasp_aware_insertion = LaunchConfiguration("grasp_aware_insertion")
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -66,6 +67,17 @@ def generate_launch_description():
                         "jerk-limited timing directly (scale it via the cumotion node's "
                         "time_dilation_factor). A/B knob for the planner comparison.",
         ),
+        DeclareLaunchArgument(
+            "grasp_aware_insertion",
+            default_value="false",
+            description="MoveIt insertion mode only. false (default) = fixed calibrated insert "
+                        "pose (moveit_insert_orientation_xyzw/offset_xyz). true = derive the "
+                        "insert EE pose from the measured bottle-in-hand transform "
+                        "(grasp_in_hand, published by Isaac at the suction bond) so the bottle "
+                        "ends upright over the socket however it sits in the gripper -- required "
+                        "for Isaac's --grip-in-place. Falls back to the fixed pose if no valid "
+                        "in-hand transform is available. Overrides the YAML value.",
+        ),
         # Start the actual move_group node/action server
         Node(
             package="edi_bottle_picking",
@@ -79,6 +91,7 @@ def generate_launch_description():
                 "insertion_mode": ParameterValue(insertion_mode, value_type=str),
                 "planning_pipeline": ParameterValue(planning_pipeline, value_type=str),
                 "retime_plans": ParameterValue(retime_plans, value_type=bool),
+                "grasp_aware_insertion": ParameterValue(grasp_aware_insertion, value_type=bool),
             }],
         ),
     ])

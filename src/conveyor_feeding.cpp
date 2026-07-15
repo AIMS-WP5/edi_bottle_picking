@@ -35,6 +35,14 @@ int moveit_insert_fallback_max_waypoints = config["moveit_insert_fallback_max_wa
     ? config["moveit_insert_fallback_max_waypoints"].as<int>() : 85;
 bool moveit_insert_validate_descent = config["moveit_insert_validate_descent"]
     ? config["moveit_insert_validate_descent"].as<bool>() : true;
+// Grasp-aware insertion (MoveIt mode only, default off): derive the insert EE pose from the
+// measured bottle-in-hand transform (grasp_in_hand) instead of the fixed calibrated pose.
+bool grasp_aware_insertion = config["grasp_aware_insertion"]
+    ? config["grasp_aware_insertion"].as<bool>() : false;
+std::string in_hand_pose_topic = config["in_hand_pose_topic"]
+    ? config["in_hand_pose_topic"].as<std::string>() : "grasp_in_hand";
+std::vector<double> grasp_aware_bottle_offset = config["grasp_aware_bottle_offset_xyz"]
+    ? config["grasp_aware_bottle_offset_xyz"].as<std::vector<double>>() : std::vector<double>{0.0, 0.0, 0.078};
 
 int main(int argc, char ** argv)
 {
@@ -105,6 +113,15 @@ int main(int argc, char ** argv)
   insertion_mode = application.node_->get_parameter("insertion_mode").as_string();
   RCLCPP_INFO(LOGGER, "conveyor_feeding: insertion_mode = %s", insertion_mode.c_str());
 
+  // Grasp-aware insertion: YAML default, overridable by the launch-provided
+  // `grasp_aware_insertion` param (same pattern as `insertion_mode`).
+  if (!application.node_->has_parameter("grasp_aware_insertion")) {
+    application.node_->declare_parameter("grasp_aware_insertion", grasp_aware_insertion);
+  }
+  grasp_aware_insertion = application.node_->get_parameter("grasp_aware_insertion").as_bool();
+  RCLCPP_INFO(LOGGER, "conveyor_feeding: grasp_aware_insertion = %s",
+              grasp_aware_insertion ? "true" : "false");
+
   // socket_pose_topic + MoveIt-mode geometry are YAML-only (no launch override needed).
   std::array<double, 3> insert_offset = {0.0, 0.0, 0.0};
   for (size_t i = 0; i < 3 && i < moveit_insert_offset.size(); ++i) insert_offset[i] = moveit_insert_offset[i];
@@ -119,10 +136,14 @@ int main(int argc, char ** argv)
                 moveit_insert_fallback_max_waypoints, moveit_insert_validate_descent ? "true" : "false");
   }
 
+  std::array<double, 3> ga_bottle_offset = {0.0, 0.0, 0.078};
+  for (size_t i = 0; i < 3 && i < grasp_aware_bottle_offset.size(); ++i) ga_bottle_offset[i] = grasp_aware_bottle_offset[i];
+
   ConveyorFeedingUtils conveyor_feeding_utils(manipulator, grasp_pose_topic, default_controller, debug, is_isaac, max_pick_attempts,
                                               insertion_mode, socket_pose_topic, insert_offset, moveit_insert_above_dz, insert_orientation,
                                               moveit_insert_descent_collision_check,
-                                              moveit_insert_fallback_max_waypoints, moveit_insert_validate_descent);
+                                              moveit_insert_fallback_max_waypoints, moveit_insert_validate_descent,
+                                              grasp_aware_insertion, in_hand_pose_topic, ga_bottle_offset);
 
   rclcpp::Duration d = rclcpp::Duration::from_seconds(1.0);
   if(!application.gripper_action_client_ptr->wait_for_action_server(d.to_chrono<std::chrono::duration<double>>())) {

@@ -12,6 +12,7 @@
 #                        [--max-velocity RAD_S] [--gripper TYPE] [--no-pick] [--no-attach]
 #                        [--best-grasp] [--debug|--no-debug] [--bottle-picking-iterations N]
 #                        [--insertion-mode dp|moveit] [--planner ompl|cumotion]
+#                        [--grasp-aware true|false]
 #   bringup_sim_stack.sh down            # Ctrl-C every node and kill the tmux session
 #
 # Examples:
@@ -33,6 +34,13 @@
 # PipelineScope). There is deliberately NO --insertion-mode cumotion: planner choice is
 # orthogonal to insertion strategy. NB: the first cumotion start after a torch/driver change
 # re-JITs CUDA kernels (~4 min) -- the readiness wait tolerates it.
+#
+# --grasp-aware true (moveit insertion mode only): derive the insert EE pose from the measured
+# bottle-in-hand transform (grasp_in_hand, published by Isaac at the suction bond) instead of
+# the fixed calibrated pose -- so the bottle ends upright over the socket however it sits in
+# the gripper. Pair with Isaac's --grip-in-place for physical suction end-to-end (no seat
+# snap). With the default seat-snap the derived pose reproduces the fixed one (delta logged
+# per insertion). Default false = byte-identical legacy behaviour.
 #
 # --insertion-mode moveit: run the MoveIt comparison test instead of the DP velocity segment.
 # The DP node is NOT launched (the insertion is MoveIt position-controlled + a Cartesian
@@ -85,6 +93,9 @@ PLANNER="ompl"
 # sim-gated TOTG scaling).
 RETIME_PLANS="true"
 TIME_DILATION="0.5"
+# Grasp-aware insertion (moveit insertion mode only): derive the insert EE pose from the
+# measured bottle-in-hand transform instead of the fixed calibrated pose. See --grasp-aware.
+GRASP_AWARE="false"
 RUN_PICK=1
 ATTACH=1
 # Optional stand-in vision publisher on /best_grasp. Disabled by default: the Isaac
@@ -126,6 +137,7 @@ while [[ $# -gt 0 ]]; do
         --planner)          PLANNER="$2"; shift 2;;
         --retime-plans)     RETIME_PLANS="$2"; shift 2;;
         --time-dilation)    TIME_DILATION="$2"; shift 2;;
+        --grasp-aware)      GRASP_AWARE="$2"; shift 2;;
         -h|--help)          awk 'NR>1 && /^#/{sub(/^# ?/,""); print; next} NR>1{exit}' "$0"; exit 0;;
         *) echo "unknown arg: $1 (try --help)" >&2; exit 1;;
     esac
@@ -140,6 +152,13 @@ case "$PLANNER" in
     cumotion) USE_CUMOTION="true"; PLANNING_PIPELINE="isaac_ros_cumotion";;
     *) echo "invalid --planner '$PLANNER' (expected: ompl | cumotion)" >&2; exit 1;;
 esac
+case "$GRASP_AWARE" in
+    true|false) ;;
+    *) echo "invalid --grasp-aware '$GRASP_AWARE' (expected: true | false)" >&2; exit 1;;
+esac
+if [[ "$GRASP_AWARE" == "true" && "$INSERTION_MODE" != "moveit" ]]; then
+    echo "WARNING: --grasp-aware true only affects --insertion-mode moveit (current: $INSERTION_MODE)" >&2
+fi
 
 command -v tmux >/dev/null || { echo "tmux not installed -> sudo apt install tmux" >&2; exit 1; }
 [[ -f "$ENV_HELPER" ]]  || { echo "missing env helper: $ENV_HELPER" >&2; exit 1; }
@@ -232,7 +251,7 @@ if (( RUN_PICK )); then
     # before run_dp_segment() reads it. (The old /object_point wait was a stale check -- that
     # topic was renamed to /socket_center -- so it always burned its full 60 s timeout.)
     echo "== phase 3: pick (conveyor_feeding, insertion_mode=$INSERTION_MODE) =="
-    newwin pick "ros2 launch edi_bottle_picking conveyor_feeding.launch.py use_sim_time:=true debug:=$DEBUG iterations:=$BOTTLE_PICKING_ITERATIONS insertion_mode:=$INSERTION_MODE planning_pipeline:=$PLANNING_PIPELINE retime_plans:=$RETIME_PLANS"
+    newwin pick "ros2 launch edi_bottle_picking conveyor_feeding.launch.py use_sim_time:=true debug:=$DEBUG iterations:=$BOTTLE_PICKING_ITERATIONS insertion_mode:=$INSERTION_MODE planning_pipeline:=$PLANNING_PIPELINE retime_plans:=$RETIME_PLANS grasp_aware_insertion:=$GRASP_AWARE"
     # manipulator_interface::cartesian_goal() has an UNCONDITIONAL world_marker_->prompt() before
     # executing the cartesian plan (not gated by our debug flag). In no-debug mode, put
     # rviz_visual_tools into autonomous mode -- the GUI 'Continue' button = buttons[2] on
@@ -247,7 +266,7 @@ fi
 echo
 if [[ "$BOTTLE_PICKING_ITERATIONS" == "-1" ]]; then ITERS_DISP="config default"; else ITERS_DISP="$BOTTLE_PICKING_ITERATIONS"; fi
 echo "tmux session '$SESSION' is up."
-echo "  insertion_mode=$INSERTION_MODE  planner=$PLANNER  model=$MODEL_NAME  steps=$STEP_COUNT  collision_check=$COLLISION_CHECK  max_velocity=$MAX_VELOCITY  gripper=$GRIPPER_TYPE  debug=$DEBUG  bottle_picking_iterations=$ITERS_DISP"
+echo "  insertion_mode=$INSERTION_MODE  planner=$PLANNER  grasp_aware=$GRASP_AWARE  model=$MODEL_NAME  steps=$STEP_COUNT  collision_check=$COLLISION_CHECK  max_velocity=$MAX_VELOCITY  gripper=$GRIPPER_TYPE  debug=$DEBUG  bottle_picking_iterations=$ITERS_DISP"
 echo "  windows: control moveit velbridge vacbridge$( [[ $INSERTION_MODE == moveit ]] && echo ' padframe' || echo ' dp')$( [[ $PLANNER == cumotion ]] && echo ' cumotion')$( ((RUN_BESTGRASP)) && echo ' bestgrasp')$( ((RUN_PICK)) && echo ' pick')$( ((RUN_PICK)) && [[ $DEBUG == false ]] && echo ' autocont')"
 if [[ "$INSERTION_MODE" == "moveit" ]]; then
     echo "  NOTE: MoveIt comparison mode -- DP node not launched. For a clean comparison start Isaac with:"

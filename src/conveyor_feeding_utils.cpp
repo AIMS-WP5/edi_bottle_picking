@@ -18,6 +18,15 @@ static constexpr double SAFE_LIFT_M = 0.20;
 static constexpr double DESCENT_SHALLOW_STEP_M = 0.002;  // 2 mm increments
 static constexpr double DESCENT_MAX_SHALLOW_M  = 0.010;  // up to 10 mm short of full depth
 
+// IK branch-distance cap for the above-socket move. 2.0 rad (fixed calibrated pose: any
+// larger delta is a flipped/contorted branch). Grasp-aware mode must allow the legitimate
+// MIRRORED postures a flipped/rolled bottle demands (~2.3-2.6 rad on a wrist/elbow joint --
+// observed 2026-07-15: every spin candidate of a flipped grasp was rejected at 2.0), so it
+// uses the relaxed cap and relies on GUARD2 (collision-checked descent feasibility from the
+// exact arrival config) as the true arbiter of a usable branch.
+static constexpr double INSERT_MAX_SEED_DELTA             = 2.0;
+static constexpr double GRASP_AWARE_INSERT_MAX_SEED_DELTA = 3.5;
+
 // Arm joint order used for /compute_ik seeds/solutions and descent pre-validation.
 static const std::vector<std::string> ARM_JOINTS = {
 	"shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint",
@@ -46,11 +55,14 @@ struct PipelineScope {
 ConveyorFeedingUtils::ConveyorFeedingUtils(manipulator_interface::ManipulatorInterface& manipulator, std::string grasp_pose_topic, std::string default_controller, bool debug, bool is_isaac, int max_pick_attempts,
     std::string insertion_mode, std::string socket_pose_topic, std::array<double, 3> moveit_insert_offset, double moveit_insert_above_dz,
     std::array<double, 4> moveit_insert_orientation, bool moveit_insert_descent_collision_check,
-    int moveit_insert_fallback_max_waypoints, bool moveit_insert_validate_descent)
+    int moveit_insert_fallback_max_waypoints, bool moveit_insert_validate_descent,
+    bool grasp_aware_insertion, std::string in_hand_pose_topic, std::array<double, 3> grasp_aware_bottle_offset)
     : manipulator_(manipulator), debug_(debug), simulation_(is_isaac), max_pick_attempts_(max_pick_attempts), default_controller_(default_controller),
       insertion_mode_(insertion_mode), socket_pose_topic_(socket_pose_topic), moveit_insert_offset_(moveit_insert_offset), moveit_insert_above_dz_(moveit_insert_above_dz),
       moveit_insert_orientation_(moveit_insert_orientation), moveit_insert_descent_collision_check_(moveit_insert_descent_collision_check),
-      moveit_insert_fallback_max_waypoints_(moveit_insert_fallback_max_waypoints), moveit_insert_validate_descent_(moveit_insert_validate_descent)
+      moveit_insert_fallback_max_waypoints_(moveit_insert_fallback_max_waypoints), moveit_insert_validate_descent_(moveit_insert_validate_descent),
+      grasp_aware_insertion_(grasp_aware_insertion), in_hand_pose_topic_(in_hand_pose_topic),
+      grasp_aware_bottle_offset_(grasp_aware_bottle_offset)
 {
 	sub_grasp_pose_ = manipulator.node_->create_subscription<geometry_msgs::msg::PoseStamped>(
 		grasp_pose_topic, 10, std::bind(&ConveyorFeedingUtils::grasp_pose_callback, this, _1)
@@ -59,6 +71,11 @@ ConveyorFeedingUtils::ConveyorFeedingUtils(manipulator_interface::ManipulatorInt
 	// (main thread) so run_moveit_insert_segment never creates a subscription mid-run.
 	sub_socket_pose_ = manipulator.node_->create_subscription<geometry_msgs::msg::PoseStamped>(
 		socket_pose_topic_, 10, std::bind(&ConveyorFeedingUtils::socket_pose_callback, this, _1)
+	);
+	// Measured bottle-in-hand transform (Isaac publishes every frame; frame_id "wrist_3_link"
+	// while a bottle is bonded, "none" otherwise). Latched continuously like the socket pose.
+	sub_in_hand_pose_ = manipulator.node_->create_subscription<geometry_msgs::msg::PoseStamped>(
+		in_hand_pose_topic_, 10, std::bind(&ConveyorFeedingUtils::in_hand_pose_callback, this, _1)
 	);
 	control_switcher_ = std::make_unique<edi_bottle_picking::ControlModeSwitcher>(
 		manipulator.node_, is_isaac, default_controller_);
@@ -311,9 +328,47 @@ bool ConveyorFeedingUtils::try_pick_bottle()
 	grasp_pose_stamped.header.frame_id = curr_grasp_frame_.empty() ? "realsense_455_on_stand" : curr_grasp_frame_;
 	geometry_msgs::msg::PoseStamped pick_pose_stamped = manipulator_.transform_pose("world", grasp_pose_stamped);
 	geometry_msgs::msg::Pose pick_pose = pick_pose_stamped.pose;
+	// Raw world-frame bottle pose (pre-verticalization): the canonical grasp-orientation
+	// construction below needs the bottle's actual long-axis direction.
+	geometry_msgs::msg::Pose grasp_pose_raw = pick_pose_stamped.pose;
 	manipulator_.world_marker_->publishAxisLabeled(pick_pose, "Object_pose");
 	manipulator_.world_marker_->trigger();
 	pick_pose = check_pose_angle(pick_pose, 0);
+	// Grasp-aware mode: CANONICAL grasp orientation. check_pose_angle verticalizes the
+	// published bottle quaternion, so the bottle's roll about its own long axis (the
+	// physically irrelevant free DOF -- bottles settle at +/-20 deg rolls) and the
+	// publisher's flip content leak straight into the wrist yaw, giving each grasp a
+	// different gripper-to-bottle orientation. Under the legacy seat-snap that never
+	// mattered (the snap re-seated the bottle canonically); with grip-in-place the bond
+	// keeps whatever relationship the pick produced, and a non-canonical one forces a
+	// mirrored, physically colliding wrist at insertion. Rebuild the orientation from the
+	// bottle's long-axis AZIMUTH alone: yaw = azimuth(neck) + 90 deg over the top-down
+	// base Rx(180), which reproduces the known-good nominal case (unflipped, unrolled
+	// bottle at azimuth -90 -> exactly Rx(180)) and is invariant to roll. Flipped bottles
+	// get their 180 yaw HERE, above the box where the wrist is free -- not at insertion.
+	if (grasp_aware_insertion_) {
+		tf2::Quaternion qb(grasp_pose_raw.orientation.x, grasp_pose_raw.orientation.y,
+		                   grasp_pose_raw.orientation.z, grasp_pose_raw.orientation.w);
+		tf2::Vector3 neck = tf2::Matrix3x3(qb) * tf2::Vector3(0.0, 0.0, 1.0);
+		neck.setZ(0.0);
+		if (neck.length() > 0.5) {
+			const double alpha = std::atan2(neck.y(), neck.x());
+			tf2::Quaternion q_pick =
+				tf2::Quaternion(tf2::Vector3(0.0, 0.0, 1.0), alpha + M_PI_2) *
+				tf2::Quaternion(tf2::Vector3(1.0, 0.0, 0.0), M_PI);
+			q_pick.normalize();
+			pick_pose.orientation.x = q_pick.x();
+			pick_pose.orientation.y = q_pick.y();
+			pick_pose.orientation.z = q_pick.z();
+			pick_pose.orientation.w = q_pick.w();
+			RCLCPP_INFO(LOGGER, "grasp-aware pick: canonical wrist yaw from bottle-axis azimuth "
+			            "%.1f deg (roll/flip content of the published pose ignored)",
+			            alpha * 180.0 / M_PI);
+		} else {
+			RCLCPP_WARN(LOGGER, "grasp-aware pick: bottle long axis near-vertical (|horiz|=%.2f); "
+			            "keeping the legacy verticalized grasp orientation", neck.length());
+		}
+	}
 	// manipulator_.world_marker_->deleteAllMarkers();
 	manipulator_.world_marker_->publishAxisLabeled(pick_pose, "Corrected_object_pose");
 	manipulator_.world_marker_->trigger();
@@ -745,56 +800,121 @@ std::optional<bool> ConveyorFeedingUtils::run_moveit_insert_segment(int socket_t
 	insert_pose.position.y = socket.position.y + moveit_insert_offset_[1];
 	insert_pose.position.z = socket.position.z + moveit_insert_offset_[2];
 
-	geometry_msgs::msg::Pose above_pose = insert_pose;
-	above_pose.position.z += moveit_insert_above_dz_;
-
-	manipulator_.world_marker_->publishAxisLabeled(above_pose, "Insert_above");
-	manipulator_.world_marker_->publishAxisLabeled(insert_pose, "Insert_target");
-	manipulator_.world_marker_->trigger();
+	// Candidate insert poses. Fixed mode: exactly one (the calibrated pose above). Grasp-aware
+	// mode: EE targets derived from the MEASURED bottle-in-hand transform so the bottle --
+	// however it actually sits in the gripper (grip-in-place) -- ends upright over the socket;
+	// several world-Z spins of the (axis-symmetric) bottle are offered, best-first, because a
+	// mirrored/flipped grasp makes the closest-to-calibrated spin IK-hostile while a rotated
+	// one is clean (2026-07-15 test: flipped bottles failed all guards at phi*, the +/-90/180
+	// candidates recover them). Falls back to the fixed pose if no valid in-hand pose exists.
+	std::vector<geometry_msgs::msg::Pose> insert_candidates{insert_pose};
+	if (grasp_aware_insertion_) {
+		auto derived = compute_grasp_aware_insert_candidates(socket);
+		if (!derived.empty()) {
+			// Delta of the best candidate vs the fixed calibrated pose: ~0 with the canonical
+			// seat (the live regression anchor for the derivation); large under grip-in-place.
+			const auto& d = derived.front();
+			const double dp = std::sqrt(
+				std::pow(d.position.x - insert_pose.position.x, 2) +
+				std::pow(d.position.y - insert_pose.position.y, 2) +
+				std::pow(d.position.z - insert_pose.position.z, 2));
+			tf2::Quaternion qd(d.orientation.x, d.orientation.y, d.orientation.z, d.orientation.w);
+			tf2::Quaternion qf(insert_pose.orientation.x, insert_pose.orientation.y,
+			                   insert_pose.orientation.z, insert_pose.orientation.w);
+			const double dang = qd.angleShortestPath(qf) * 180.0 / M_PI;
+			RCLCPP_INFO(LOGGER, "grasp-aware insertion: derived EE target pos=[%.4f, %.4f, %.4f] "
+			            "orient(xyzw)=[%.4f, %.4f, %.4f, %.4f]; delta vs fixed calibrated pose: "
+			            "%.1f mm, %.1f deg (expected ~0 with the canonical seat); %zu spin candidates",
+			            d.position.x, d.position.y, d.position.z,
+			            d.orientation.x, d.orientation.y, d.orientation.z, d.orientation.w,
+			            dp * 1000.0, dang, derived.size());
+			insert_candidates = derived;
+		}
+	}
 
 	// Move 1: joint-space MoveIt plan to the pose above the socket. Resolve IK ourselves
 	// (seeded from the current config) and plan to that explicit joint target, so the arm
 	// reaches the NATURAL config -- a short move, and the one the vertical descent continues
 	// from -- instead of a contorted branch a pose target might pick.
 	maybe_prompt("press 'Next' to move above the socket");
-	// Primary path: seeded /compute_ik (max_seed_delta=2.0 rejects the flipped-wrist branch,
-	// wrist_3 ~ +4 deg instead of -176 deg) + joint_goal to that explicit joint target.
-	auto above_joints = compute_ik_seeded(above_pose, /*max_seed_delta=*/2.0);
+	geometry_msgs::msg::Pose above_pose;
 	// GUARD 2 on the SEEDED path too: a seed-accepted IK branch can still be descent-hostile --
 	// e.g. a wrapped-wrist arrival (wrist_1 ~ -275 deg) whose straight-down descent would sweep
 	// the wrist through the table (observed 2026-07-14 with planning_pipeline=isaac_ros_cumotion:
 	// descent failed even 10 mm shallow and the bottle was released from above_dz). The seed
 	// varies with each bottle's grasp yaw, so any pipeline can draw such a branch. Validate the
 	// descent from the IK config BEFORE executing the move, exactly as the fallback does.
+	// The collision-checked descent validation is the arbiter that keeps hostile spin
+	// candidates from executing. Empirical (2026-07-15, grip-in-place): a fully mirrored
+	// wrist (flipped bottle, ~135 deg from calibrated) fails it at fraction ~0.3 -- and a
+	// collisions-off trial run proved that verdict PHYSICAL, not model conservatism: the
+	// executed mirrored descent hit the pad (asymmetric camera-arm holder), the controller
+	// aborted mid-descent, and the wedged near-contact arm state killed every following
+	// cycle. Do NOT bypass this check to "rescue" mirrored candidates; flipped bottles fail
+	// cleanly up front (arm safe, next cycles unaffected) until a finer attached-object
+	// model can tell true holder collisions from unmodelled-socket false positives.
+	const bool descent_collision_check = moveit_insert_descent_collision_check_;
+	// (Captures above_pose/insert_pose by reference: validates the CURRENT candidate.)
 	auto descent_ok = [&](const std::vector<double> &joints) {
 		return !moveit_insert_validate_descent_ ||
 		       manipulator_.cartesian_descent_feasible(ARM_JOINTS, joints,
-		               above_pose, insert_pose, moveit_insert_descent_collision_check_,
+		               above_pose, insert_pose, descent_collision_check,
 		               DESCENT_SHALLOW_STEP_M, DESCENT_MAX_SHALLOW_M);
 	};
-	if (above_joints.has_value() && !descent_ok(*above_joints)) {
-		RCLCPP_WARN(LOGGER, "MoveIt insertion: GUARD2 seeded-IK above-config is descent-hostile "
-		            "(straight-down descent unplannable from it); retrying IK from the canonical "
-		            "insert-ready seed");
-		above_joints.reset();
-	}
-	// Second seeded attempt from the CANONICAL insert-ready posture: when the arm's current
-	// config is itself in a hostile basin (a cuMotion transfer may land there), current-seeded
-	// IK can only return that basin. Seeding from the known-descendable above-socket posture
-	// (the natural branch every baseline insertion used; wrist_1 ~ -63 deg, wrist_2 ~ +52 deg)
-	// steers IK back to it. The larger seed delta only bounds the solution's distance from THIS
-	// seed, not from the arm.
-	if (!above_joints.has_value()) {
-		static const std::vector<double> NATURAL_INSERT_SEED = {
-			-1.444, -1.399, 2.497, -1.097, 0.912, -3.076};
-		above_joints = compute_ik_seeded(above_pose, /*max_seed_delta=*/2.0,
-		                                 /*ignore_wrist=*/false, NATURAL_INSERT_SEED);
+	std::optional<std::vector<double>> above_joints;
+	const double max_seed_delta = grasp_aware_insertion_
+		? GRASP_AWARE_INSERT_MAX_SEED_DELTA : INSERT_MAX_SEED_DELTA;
+	for (size_t ci = 0; ci < insert_candidates.size() && !above_joints.has_value(); ++ci) {
+		insert_pose = insert_candidates[ci];
+		above_pose = insert_pose;
+		above_pose.position.z += moveit_insert_above_dz_;
+
+		// Primary path: seeded /compute_ik (max_seed_delta rejects the flipped-wrist branch,
+		// wrist_3 ~ +4 deg instead of -176 deg) + joint_goal to that explicit joint target.
+		above_joints = compute_ik_seeded(above_pose, max_seed_delta);
 		if (above_joints.has_value() && !descent_ok(*above_joints)) {
-			RCLCPP_WARN(LOGGER, "MoveIt insertion: GUARD2 natural-seed above-config also "
-			            "descent-hostile; trying the guarded pose_goal fallback");
+			RCLCPP_WARN(LOGGER, "MoveIt insertion: GUARD2 seeded-IK above-config is descent-hostile "
+			            "(straight-down descent unplannable from it); retrying IK from the canonical "
+			            "insert-ready seed");
 			above_joints.reset();
 		}
+		// Second seeded attempt from the CANONICAL insert-ready posture: when the arm's current
+		// config is itself in a hostile basin (a cuMotion transfer may land there), current-seeded
+		// IK can only return that basin. Seeding from the known-descendable above-socket posture
+		// (the natural branch every baseline insertion used; wrist_1 ~ -63 deg, wrist_2 ~ +52 deg)
+		// steers IK back to it. The larger seed delta only bounds the solution's distance from THIS
+		// seed, not from the arm.
+		if (!above_joints.has_value()) {
+			static const std::vector<double> NATURAL_INSERT_SEED = {
+				-1.444, -1.399, 2.497, -1.097, 0.912, -3.076};
+			above_joints = compute_ik_seeded(above_pose, max_seed_delta,
+			                                 /*ignore_wrist=*/false, NATURAL_INSERT_SEED);
+			if (above_joints.has_value() && !descent_ok(*above_joints)) {
+				RCLCPP_WARN(LOGGER, "MoveIt insertion: GUARD2 natural-seed above-config also "
+				            "descent-hostile; %s",
+				            ci + 1 < insert_candidates.size()
+				                ? "trying the next spin candidate"
+				                : "trying the guarded pose_goal fallback");
+				above_joints.reset();
+			}
+		}
+		if (above_joints.has_value() && ci > 0) {
+			RCLCPP_INFO(LOGGER, "grasp-aware insertion: spin candidate %zu/%zu accepted by the "
+			            "IK + descent guards (earlier candidates were IK-hostile)",
+			            ci + 1, insert_candidates.size());
+		}
 	}
+	if (!above_joints.has_value()) {
+		// All candidates rejected: run the global fallback against the preferred candidate.
+		insert_pose = insert_candidates.front();
+		above_pose = insert_pose;
+		above_pose.position.z += moveit_insert_above_dz_;
+	}
+
+	manipulator_.world_marker_->publishAxisLabeled(above_pose, "Insert_above");
+	manipulator_.world_marker_->publishAxisLabeled(insert_pose, "Insert_target");
+	manipulator_.world_marker_->trigger();
+
 	bool reached_above = above_joints.has_value() && manipulator_.joint_goal(*above_joints);
 	if (!reached_above) {
 		// Fallback: pose_goal (setPoseTarget + the global OMPL planner). /compute_ik is a local,
@@ -835,7 +955,7 @@ std::optional<bool> ConveyorFeedingUtils::run_moveit_insert_segment(int socket_t
 		// itself would; a near-singular arrival (iter-13) is caught here up front.
 		if (moveit_insert_validate_descent_ &&
 		    !manipulator_.cartesian_descent_feasible(pr.goal_joint_names, pr.goal_positions,
-		            above_pose, insert_pose, moveit_insert_descent_collision_check_,
+		            above_pose, insert_pose, descent_collision_check,
 		            DESCENT_SHALLOW_STEP_M, DESCENT_MAX_SHALLOW_M)) {
 			RCLCPP_ERROR(LOGGER, "MoveIt insertion: GUARD2 straight-down descent infeasible from the "
 			             "planned above-config (near-singular/contorted arrival); failing iteration "
@@ -869,7 +989,7 @@ std::optional<bool> ConveyorFeedingUtils::run_moveit_insert_segment(int socket_t
 	for (double dz = 0.0; dz <= DESCENT_MAX_SHALLOW_M + 1e-9; dz += DESCENT_SHALLOW_STEP_M) {
 		geometry_msgs::msg::Pose descend_pose = insert_pose;
 		descend_pose.position.z += dz;
-		if (manipulator_.cartesian_goal(descend_pose, 50.0, /*avoid_collisions=*/moveit_insert_descent_collision_check_)) {
+		if (manipulator_.cartesian_goal(descend_pose, 50.0, /*avoid_collisions=*/descent_collision_check)) {
 			if (dz > 0.0) {
 				RCLCPP_WARN(LOGGER, "MoveIt insertion: full-depth descent unplannable; inserted "
 				            "%.0f mm shallower (z+%.3f) -- partial insertion", dz * 1000.0, dz);
@@ -906,6 +1026,90 @@ void ConveyorFeedingUtils::socket_pose_callback(const geometry_msgs::msg::PoseSt
 {
 	curr_socket_pose_ = msg->pose;
 	socket_received_.store(true);
+}
+
+void ConveyorFeedingUtils::in_hand_pose_callback(const geometry_msgs::msg::PoseStamped::SharedPtr msg)
+{
+	curr_in_hand_pose_ = msg->pose;
+	curr_in_hand_frame_ = msg->header.frame_id;
+	in_hand_received_.store(true);
+}
+
+std::vector<geometry_msgs::msg::Pose> ConveyorFeedingUtils::compute_grasp_aware_insert_candidates(
+    const geometry_msgs::msg::Pose& socket)
+{
+	// Validity gate: Isaac publishes frame_id "none" (sentinel) whenever no bottle is bonded,
+	// so a stale transform from a previous cycle can never leak into this one.
+	if (!in_hand_received_.load() || curr_in_hand_frame_.empty() || curr_in_hand_frame_ == "none") {
+		RCLCPP_WARN(LOGGER, "grasp-aware insertion: no valid in-hand pose on '%s' (frame_id='%s'); "
+		            "falling back to the fixed calibrated insert pose",
+		            in_hand_pose_topic_.c_str(),
+		            curr_in_hand_frame_.empty() ? "<none received>" : curr_in_hand_frame_.c_str());
+		return {};
+	}
+
+	// T_ee_bottle: the measured bottle pose re-expressed in the EE (virtual_ee_link) frame.
+	// transform_pose resolves the static wrist_3_link -> virtual_ee_link chain via TF.
+	geometry_msgs::msg::PoseStamped in_hand_stamped;
+	in_hand_stamped.header.frame_id = curr_in_hand_frame_;
+	in_hand_stamped.pose = curr_in_hand_pose_;
+	geometry_msgs::msg::PoseStamped bottle_in_ee;
+	try {
+		bottle_in_ee = manipulator_.transform_pose("virtual_ee_link", in_hand_stamped);
+	} catch (const std::exception& e) {
+		RCLCPP_WARN(LOGGER, "grasp-aware insertion: TF '%s' -> 'virtual_ee_link' failed (%s); "
+		            "falling back to the fixed calibrated insert pose",
+		            curr_in_hand_frame_.c_str(), e.what());
+		return {};
+	}
+	tf2::Transform T_eb;
+	tf2::fromMsg(bottle_in_ee.pose, T_eb);
+
+	// Desired BOTTLE pose: upright (local +Z up -- the asset's long axis, neck up, matching
+	// every recorded successful insertion), origin at socket + grasp_aware_bottle_offset_.
+	// The spin about world Z is a free DOF (the bottle is axis-symmetric); choose it so the
+	// resulting EE orientation is as close as possible to the calibrated fixed orientation,
+	// keeping the IK solution in the known-good basin. Closed form: with q_be the EE
+	// orientation for zero spin, dot(qz(phi) * q_be, q_cal) = A cos(phi/2) + B sin(phi/2),
+	// maximised at phi = 2 atan2(B, A), where A = <q_be, q_cal> and B = <k * q_be, q_cal>
+	// (k the pure-z unit quaternion). |q| double-cover is absorbed by the atan2 branch.
+	tf2::Quaternion q_be = T_eb.getRotation().inverse();   // EE orientation when bottle frame == world axes
+	tf2::Quaternion q_cal(moveit_insert_orientation_[0], moveit_insert_orientation_[1],
+	                      moveit_insert_orientation_[2], moveit_insert_orientation_[3]);
+	tf2::Quaternion k(0.0, 0.0, 1.0, 0.0);                 // pure z
+	tf2::Quaternion kq = k * q_be;
+	const double A = q_be.x() * q_cal.x() + q_be.y() * q_cal.y() + q_be.z() * q_cal.z() + q_be.w() * q_cal.w();
+	const double B = kq.x() * q_cal.x() + kq.y() * q_cal.y() + kq.z() * q_cal.z() + kq.w() * q_cal.w();
+	const double phi_star = 2.0 * std::atan2(B, A);
+
+	// Candidate spins: phi* is the closest to the calibrated orientation by construction;
+	// +/-90 and 180 give the seeded-IK + descent guards reachable alternatives when phi* is
+	// IK-hostile (mirrored/flipped grasps). Order the rest by their own closeness to q_cal.
+	const tf2::Vector3 world_z(0.0, 0.0, 1.0);
+	const tf2::Vector3 p_target(socket.position.x + grasp_aware_bottle_offset_[0],
+	                            socket.position.y + grasp_aware_bottle_offset_[1],
+	                            socket.position.z + grasp_aware_bottle_offset_[2]);
+	std::vector<std::pair<double, double>> spins;   // (closeness score, phi)
+	for (double dphi : {0.0, M_PI_2, -M_PI_2, M_PI}) {
+		const double phi = phi_star + dphi;
+		const double score = std::abs(A * std::cos(phi / 2.0) + B * std::sin(phi / 2.0));
+		spins.emplace_back(score, phi);
+	}
+	std::sort(spins.begin(), spins.end(),
+	          [](const auto& a, const auto& b) { return a.first > b.first; });
+
+	std::vector<geometry_msgs::msg::Pose> candidates;
+	for (const auto& [score, phi] : spins) {
+		tf2::Transform T_wb;   // desired bottle pose in world
+		T_wb.setRotation(tf2::Quaternion(world_z, phi));
+		T_wb.setOrigin(p_target);
+		// EE target: T_world_ee = T_world_bottle * inverse(T_ee_bottle).
+		tf2::Transform T_we = T_wb * T_eb.inverse();
+		geometry_msgs::msg::Pose ee_pose;
+		tf2::toMsg(T_we, ee_pose);
+		candidates.push_back(ee_pose);
+	}
+	return candidates;
 }
 
 bool ConveyorFeedingUtils::get_grasped_status(int timeout_sec)

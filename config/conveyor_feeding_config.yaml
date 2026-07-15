@@ -26,6 +26,10 @@ moveit_insert_orientation_xyzw: [0.483598, -0.515881, -0.483598, 0.515881]
 # (safe; may abort if the planning scene's solid table/pad blocks the bottle reaching socket
 # depth). false = skip checking for the descent (matches the DP segment, which had none). Set
 # false only if collision checking spuriously blocks a legitimate insertion.
+# NB (grasp-aware, 2026-07-15): do NOT set false to "rescue" mirrored-grasp candidates --
+# a collisions-off trial executed a mirrored descent that physically hit the pad (the
+# asymmetric camera-arm holder), aborted mid-descent and wedged the arm for all later
+# cycles. The checker's rejection of fully-mirrored spins is genuine.
 moveit_insert_descent_collision_check: true
 # Guards on the above-socket move's pose_goal global-planner FALLBACK (used only when the seeded-IK
 # natural branch fails). The fallback can occasionally return a twisted ~158-waypoint plan (normal
@@ -33,3 +37,19 @@ moveit_insert_descent_collision_check: true
 # the (potentially ~40 s) move executes, so a bad plan fails the iteration up front instead.
 moveit_insert_fallback_max_waypoints: 85   # reject (fail iter) if the fallback plan exceeds this many waypoints
 moveit_insert_validate_descent: true       # pre-validate the straight-down descent from the planned above-config first
+
+# Grasp-aware insertion (MoveIt mode only; default off). When true, the insert EE pose is
+# DERIVED from the measured bottle-in-hand transform (in_hand_pose_topic, published by Isaac
+# at the suction bond: bottle pose in the wrist_3_link frame, frame_id "none" when detached)
+# so the bottle ends upright over the socket however it sits in the gripper -- required for
+# Isaac's --grip-in-place (no canonical-seat snap). With the canonical seat the derived pose
+# reproduces the fixed calibrated one (delta logged each insertion as a regression anchor).
+# Falls back to the fixed pose if no valid in-hand transform is available. Overridable via
+# the conveyor_feeding.launch.py 'grasp_aware_insertion' arg (bringup: --grasp-aware).
+grasp_aware_insertion: false
+in_hand_pose_topic: "grasp_in_hand"
+# Desired BOTTLE-origin target relative to socket_center (world XYZ, m). [0, 0, 0.078] is what
+# the calibrated fixed-pose numbers imply: moveit_insert_offset z (0.09) minus the canonical
+# grip_offset (0.012); XY centred on the socket (the 0.015 offset_x is exactly the
+# wrist->bottle overhang along the horizontal tool axis, which cancels in bottle terms).
+grasp_aware_bottle_offset_xyz: [0.0, 0.0, 0.078]

@@ -28,7 +28,9 @@ namespace conveyor_feeding_utils
                          std::array<double, 3> moveit_insert_offset = {0.0, 0.0, 0.0}, double moveit_insert_above_dz = 0.10,
                          std::array<double, 4> moveit_insert_orientation = {0.515881, 0.483598, -0.515881, -0.483598},
                          bool moveit_insert_descent_collision_check = true,
-                         int moveit_insert_fallback_max_waypoints = 85, bool moveit_insert_validate_descent = true); // Constructor
+                         int moveit_insert_fallback_max_waypoints = 85, bool moveit_insert_validate_descent = true,
+                         bool grasp_aware_insertion = false, std::string in_hand_pose_topic = "grasp_in_hand",
+                         std::array<double, 3> grasp_aware_bottle_offset = {0.0, 0.0, 0.078}); // Constructor
 
     ~ConveyorFeedingUtils(); // Destructor
 
@@ -54,6 +56,7 @@ namespace conveyor_feeding_utils
     geometry_msgs::msg::Pose get_curr_grasp_pose();
     void grasp_pose_callback(const geometry_msgs::msg::PoseStamped::SharedPtr msg);
     void socket_pose_callback(const geometry_msgs::msg::PoseStamped::SharedPtr msg);
+    void in_hand_pose_callback(const geometry_msgs::msg::PoseStamped::SharedPtr msg);
 
     bool add_box();
 
@@ -93,6 +96,20 @@ namespace conveyor_feeding_utils
             vacuum-off/detach afterwards exactly as for the DP path. Mirrors run_dp_segment's
             return: true/false = success/failure, std::nullopt = no socket target. */
         std::optional<bool> run_moveit_insert_segment(int socket_timeout_sec = 5);
+
+        /** \brief Grasp-aware insertion poses: derive EE (virtual_ee_link) target CANDIDATES from
+            the MEASURED bottle-in-hand transform (grasp_in_hand, published by Isaac at the suction
+            bond) instead of the fixed calibrated orientation/offset. The desired BOTTLE pose is
+            upright (local +Z up) at socket + grasp_aware_bottle_offset_; the spin about world Z is
+            a FREE DOF (axis-symmetric bottle), so candidates at phi*, phi*+/-90, phi*+180 deg are
+            returned ordered by EE-orientation closeness to the calibrated one (phi* = closest).
+            The caller tries them in order against the seeded-IK + descent guards -- a mirrored
+            grasp (flipped bottle) is typically IK-hostile at phi* but clean at phi*+180. The EE
+            target is T_world_bottle * inverse(T_ee_bottle). With the canonical seat transform the
+            first candidate reproduces the fixed-pose target (regression anchor, logged).
+            \return candidate EE insert poses (best first), or empty if no valid in-hand pose. */
+        std::vector<geometry_msgs::msg::Pose> compute_grasp_aware_insert_candidates(
+            const geometry_msgs::msg::Pose& socket);
 
         /** \brief Compute an IK solution (via the /compute_ik service) for an EE pose, seeded
             from the current arm config so the returned branch is the natural one nearest the
@@ -145,6 +162,21 @@ namespace conveyor_feeding_utils
         // Guards on the above-socket move's pose_goal global-planner fallback (MoveIt mode only):
         int moveit_insert_fallback_max_waypoints_;         // reject (fail iter) if the fallback plan exceeds this many waypoints
         bool moveit_insert_validate_descent_;              // pre-validate the descent from the planned above-config before executing
+        // Grasp-aware insertion (default off): derive the insert EE pose from the measured
+        // bottle-in-hand transform instead of the fixed calibrated orientation/offset.
+        bool grasp_aware_insertion_;
+        std::string in_hand_pose_topic_;                   // topic carrying the measured in-hand transform
+        // Desired BOTTLE-origin target relative to socket_center (world XYZ, m). Default
+        // [0,0,0.078] is what the calibrated fixed-pose numbers imply: insert_offset_z (0.09)
+        // minus the canonical grip_offset (0.012); XY centred (the 0.015 offset_x is exactly
+        // the wrist->bottle overhang along the horizontal tool axis, cancelled in bottle terms).
+        std::array<double, 3> grasp_aware_bottle_offset_;
+        // Latest in-hand pose (bottle in wrist_3_link frame). frame_id gates validity: Isaac
+        // publishes "wrist_3_link" while a bottle is bonded and "none" otherwise.
+        rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr sub_in_hand_pose_;
+        geometry_msgs::msg::Pose curr_in_hand_pose_;
+        std::string curr_in_hand_frame_;
+        std::atomic<bool> in_hand_received_{false};
         std::unique_ptr<edi_bottle_picking::ControlModeSwitcher> control_switcher_;
 	};
 
