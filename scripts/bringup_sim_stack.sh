@@ -231,9 +231,27 @@ wait_for() {  # wait_for <desc> <test-cmd> [timeout_s]
 
 tmux kill-session -t "$SESSION" 2>/dev/null || true
 
+# ---------- decluttered RViz config ----------
+# Generate a decluttered copy of edi_robot_description's base.rviz at launch time and hand
+# it to the moveit launch via rviz_config:= -- turns off TF axes + name labels and the
+# MotionPlanning query-goal-state (orange goal ghost) render. The shared default base.rviz is
+# left untouched; regenerated every run so it always tracks the installed base.rviz.
+RVIZ_CFG=""
+BASE_RVIZ="$(ros2 pkg prefix --share edi_robot_description 2>/dev/null)/rviz/base.rviz"
+if [[ -f "$BASE_RVIZ" ]]; then
+    RVIZ_CFG="$LOGDIR/base_decluttered.rviz"
+    sed -e 's/Show Axes: true/Show Axes: false/' \
+        -e 's/Show Names: true/Show Names: false/' \
+        -e 's/Query Goal State: true/Query Goal State: false/' \
+        "$BASE_RVIZ" > "$RVIZ_CFG"
+    echo "  RViz: decluttered config -> $RVIZ_CFG (TF axes/labels off, query-goal-state off)"
+else
+    echo "  WARNING: base.rviz not found ($BASE_RVIZ) -- RViz uses its default config" >&2
+fi
+
 echo "== phase 1: control + MoveIt + bridges =="
 newwin control   "ros2 launch edi_moveit_config edi_ur_control.launch.py ur_type:=ur5e sim_isaac:=true gripper_type:=$GRIPPER_TYPE use_sim_time:=true initial_joint_controller:=joint_trajectory_controller"
-newwin moveit    "ros2 launch edi_moveit_config edi_ur_moveit.launch.py ur_type:=ur5e sim_isaac:=true gripper_type:=$GRIPPER_TYPE use_sim_time:=true launch_rviz:=true use_cumotion:=$USE_CUMOTION"
+newwin moveit    "ros2 launch edi_moveit_config edi_ur_moveit.launch.py ur_type:=ur5e sim_isaac:=true gripper_type:=$GRIPPER_TYPE use_sim_time:=true launch_rviz:=true use_cumotion:=$USE_CUMOTION${RVIZ_CFG:+ rviz_config:=$RVIZ_CFG}"
 newwin velbridge "ros2 launch edi_bottle_picking velocity_mode_bridge.launch.py"
 newwin vacbridge "ros2 launch edi_bottle_picking vacuum_gripper_bridge.launch.py"
 
