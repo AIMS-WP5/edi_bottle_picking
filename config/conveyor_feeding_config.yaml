@@ -53,3 +53,34 @@ in_hand_pose_topic: "grasp_in_hand"
 # grip_offset (0.012); XY centred on the socket (the 0.015 offset_x is exactly the
 # wrist->bottle overhang along the horizontal tool axis, which cancels in bottle terms).
 grasp_aware_bottle_offset_xyz: [0.0, 0.0, 0.078]
+
+# --- Physical bottle / suction-tip geometry (source-of-truth constants) -------------------
+# These replace magic calibration numbers with measured geometry so the pick surface and the
+# fixed-mode insert overhang track the actual bottle radius (multi-bottle support). The bottle
+# is rotationally symmetric about its long axis, so its ROLL about that axis is deliberately
+# NOT a parameter here -- orientation is handled by the insert's free world-Z spin search.
+bottle_radius: 0.0176            # cup-contact radius of the gripped bottle (m)
+grip_offset: 0.012               # cup contact offset ALONG the bottle long axis (axial, m; mirrors Isaac GRIP_OFFSET)
+# The planning frame virtual_ee_link (URDF: tool0 + 0.305) sits this far PAST the measured
+# rigid suction-cup tip (tool0 + suction_tip_length 0.3013). Modelled as cup compression, NOT
+# a frame error (the 0.305 is a deliberate EDI hardware value; left untouched).
+suction_tip_length: 0.3013       # tool0 -> rigid cup tip (measured); informational
+suction_tip_compliance: 0.0037   # virtual_ee_offset (0.305) - suction_tip_length (0.3013)
+seat_cup_stretch: 0.0011         # cup stretch at bond (mirrors Isaac SEAT_CUP_STRETCH)
+
+# Pick-depth flush (default off): when best_grasp is published at the bottle SURFACE (Isaac
+# --best-grasp-at-surface), press the tool pick_depth_compliance metres deeper so the rigid
+# cup tip meets the surface flush (virtual_ee_link is compliance past the rigid tip). Off =>
+# pick target unchanged. Overridable via conveyor_feeding.launch.py 'pick_depth_flush'.
+pick_depth_flush: false
+pick_depth_compliance: 0.0037    # default = suction_tip_compliance
+
+# Radius-aware fixed-mode insertion (default off). When true, the NON-grasp-aware insert EE
+# pose is derived through the SAME T_we = T_wb * inverse(T_ee_bottle) math as grasp-aware, but
+# with a CANONICAL in-hand transform built analytically from the geometry above (radial
+# overhang = bottle_radius - suction_tip_compliance + seat_cup_stretch; axial = grip_offset).
+# At the baseline 0.0176 bottle this reproduces moveit_insert_offset_xyz exactly (regression
+# anchor, logged); for other radii the overhang tracks the radius. Off => the literal
+# moveit_insert_offset_xyz fixed pose (byte-identical legacy). moveit_insert_offset_xyz remains
+# the final fallback when no derivation applies. Overridable via the launch 'moveit_insert_radius_aware' arg.
+moveit_insert_radius_aware: false

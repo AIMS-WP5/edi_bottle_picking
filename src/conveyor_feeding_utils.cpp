@@ -56,13 +56,19 @@ ConveyorFeedingUtils::ConveyorFeedingUtils(manipulator_interface::ManipulatorInt
     std::string insertion_mode, std::string socket_pose_topic, std::array<double, 3> moveit_insert_offset, double moveit_insert_above_dz,
     std::array<double, 4> moveit_insert_orientation, bool moveit_insert_descent_collision_check,
     int moveit_insert_fallback_max_waypoints, bool moveit_insert_validate_descent,
-    bool grasp_aware_insertion, std::string in_hand_pose_topic, std::array<double, 3> grasp_aware_bottle_offset)
+    bool grasp_aware_insertion, std::string in_hand_pose_topic, std::array<double, 3> grasp_aware_bottle_offset,
+    bool pick_depth_flush, double pick_depth_compliance, bool moveit_insert_radius_aware,
+    double bottle_radius, double grip_offset, double suction_tip_compliance, double seat_cup_stretch)
     : manipulator_(manipulator), debug_(debug), simulation_(is_isaac), max_pick_attempts_(max_pick_attempts), default_controller_(default_controller),
       insertion_mode_(insertion_mode), socket_pose_topic_(socket_pose_topic), moveit_insert_offset_(moveit_insert_offset), moveit_insert_above_dz_(moveit_insert_above_dz),
       moveit_insert_orientation_(moveit_insert_orientation), moveit_insert_descent_collision_check_(moveit_insert_descent_collision_check),
       moveit_insert_fallback_max_waypoints_(moveit_insert_fallback_max_waypoints), moveit_insert_validate_descent_(moveit_insert_validate_descent),
       grasp_aware_insertion_(grasp_aware_insertion), in_hand_pose_topic_(in_hand_pose_topic),
-      grasp_aware_bottle_offset_(grasp_aware_bottle_offset)
+      grasp_aware_bottle_offset_(grasp_aware_bottle_offset),
+      pick_depth_flush_(pick_depth_flush), pick_depth_compliance_(pick_depth_compliance),
+      moveit_insert_radius_aware_(moveit_insert_radius_aware),
+      bottle_radius_(bottle_radius), grip_offset_(grip_offset),
+      suction_tip_compliance_(suction_tip_compliance), seat_cup_stretch_(seat_cup_stretch)
 {
 	sub_grasp_pose_ = manipulator.node_->create_subscription<geometry_msgs::msg::PoseStamped>(
 		grasp_pose_topic, 10, std::bind(&ConveyorFeedingUtils::grasp_pose_callback, this, _1)
@@ -372,6 +378,18 @@ bool ConveyorFeedingUtils::try_pick_bottle()
 	// manipulator_.world_marker_->deleteAllMarkers();
 	manipulator_.world_marker_->publishAxisLabeled(pick_pose, "Corrected_object_pose");
 	manipulator_.world_marker_->trigger();
+
+	// Pick-depth flush (default off): when best_grasp is published at the bottle SURFACE (Isaac
+	// --best-grasp-at-surface), the raw target puts virtual_ee_link at the surface, which leaves
+	// the rigid cup tip suction_tip_compliance ABOVE it (the planning frame 0.305 sits that far
+	// past the measured 0.3013 rigid tip). Press the target that much DEEPER (world -Z, top-down
+	// grasp) so the rigid tip meets the surface flush. Off => target unchanged (legacy). Applied
+	// before the collision object + descent waypoints so both use the pressed pose.
+	if (pick_depth_flush_) {
+		pick_pose.position.z -= pick_depth_compliance_;
+		RCLCPP_INFO(LOGGER, "pick-depth flush: pressed grasp target %.4f m deeper (z=%.4f) so the "
+		            "cup tip meets the surface", pick_depth_compliance_, pick_pose.position.z);
+	}
 
 	// Build the grasped-bottle collision object for the post-grasp ATTACH, but do NOT add it
 	// to the planning-scene world during the approach: the approach pose ends at its surface,
@@ -808,28 +826,38 @@ std::optional<bool> ConveyorFeedingUtils::run_moveit_insert_segment(int socket_t
 	// one is clean (2026-07-15 test: flipped bottles failed all guards at phi*, the +/-90/180
 	// candidates recover them). Falls back to the fixed pose if no valid in-hand pose exists.
 	std::vector<geometry_msgs::msg::Pose> insert_candidates{insert_pose};
+	// Derived-candidate source: MEASURED in-hand transform (grasp-aware, for grip-in-place) OR the
+	// CANONICAL analytic transform (radius-aware fixed mode). Both feed the same
+	// insert_candidates_from_bottle_in_ee derivation. grasp-aware takes precedence when both are on.
+	// Either falls back to the fixed calibrated pose (insert_candidates unchanged) if it yields nothing.
+	std::vector<geometry_msgs::msg::Pose> derived;
+	const char* derived_src = nullptr;
 	if (grasp_aware_insertion_) {
-		auto derived = compute_grasp_aware_insert_candidates(socket);
-		if (!derived.empty()) {
-			// Delta of the best candidate vs the fixed calibrated pose: ~0 with the canonical
-			// seat (the live regression anchor for the derivation); large under grip-in-place.
-			const auto& d = derived.front();
-			const double dp = std::sqrt(
-				std::pow(d.position.x - insert_pose.position.x, 2) +
-				std::pow(d.position.y - insert_pose.position.y, 2) +
-				std::pow(d.position.z - insert_pose.position.z, 2));
-			tf2::Quaternion qd(d.orientation.x, d.orientation.y, d.orientation.z, d.orientation.w);
-			tf2::Quaternion qf(insert_pose.orientation.x, insert_pose.orientation.y,
-			                   insert_pose.orientation.z, insert_pose.orientation.w);
-			const double dang = qd.angleShortestPath(qf) * 180.0 / M_PI;
-			RCLCPP_INFO(LOGGER, "grasp-aware insertion: derived EE target pos=[%.4f, %.4f, %.4f] "
-			            "orient(xyzw)=[%.4f, %.4f, %.4f, %.4f]; delta vs fixed calibrated pose: "
-			            "%.1f mm, %.1f deg (expected ~0 with the canonical seat); %zu spin candidates",
-			            d.position.x, d.position.y, d.position.z,
-			            d.orientation.x, d.orientation.y, d.orientation.z, d.orientation.w,
-			            dp * 1000.0, dang, derived.size());
-			insert_candidates = derived;
-		}
+		derived = compute_grasp_aware_insert_candidates(socket);
+		derived_src = "grasp-aware (measured in-hand)";
+	} else if (moveit_insert_radius_aware_) {
+		derived = insert_candidates_from_bottle_in_ee(socket, compute_canonical_in_hand_transform());
+		derived_src = "radius-aware (canonical transform)";
+	}
+	if (!derived.empty()) {
+		// Delta of the best candidate vs the fixed calibrated pose: ~0 with the canonical seat /
+		// canonical transform (the live regression anchor for the derivation); large under grip-in-place.
+		const auto& d = derived.front();
+		const double dp = std::sqrt(
+			std::pow(d.position.x - insert_pose.position.x, 2) +
+			std::pow(d.position.y - insert_pose.position.y, 2) +
+			std::pow(d.position.z - insert_pose.position.z, 2));
+		tf2::Quaternion qd(d.orientation.x, d.orientation.y, d.orientation.z, d.orientation.w);
+		tf2::Quaternion qf(insert_pose.orientation.x, insert_pose.orientation.y,
+		                   insert_pose.orientation.z, insert_pose.orientation.w);
+		const double dang = qd.angleShortestPath(qf) * 180.0 / M_PI;
+		RCLCPP_INFO(LOGGER, "%s insertion: derived EE target pos=[%.4f, %.4f, %.4f] "
+		            "orient(xyzw)=[%.4f, %.4f, %.4f, %.4f]; delta vs fixed calibrated pose: "
+		            "%.1f mm, %.1f deg (expected ~0 at the baseline bottle); %zu spin candidates",
+		            derived_src, d.position.x, d.position.y, d.position.z,
+		            d.orientation.x, d.orientation.y, d.orientation.z, d.orientation.w,
+		            dp * 1000.0, dang, derived.size());
+		insert_candidates = derived;
 	}
 
 	// Move 1: joint-space MoveIt plan to the pose above the socket. Resolve IK ourselves
@@ -1065,6 +1093,12 @@ std::vector<geometry_msgs::msg::Pose> ConveyorFeedingUtils::compute_grasp_aware_
 	tf2::Transform T_eb;
 	tf2::fromMsg(bottle_in_ee.pose, T_eb);
 
+	return insert_candidates_from_bottle_in_ee(socket, T_eb);
+}
+
+std::vector<geometry_msgs::msg::Pose> ConveyorFeedingUtils::insert_candidates_from_bottle_in_ee(
+    const geometry_msgs::msg::Pose& socket, const tf2::Transform& T_eb)
+{
 	// Desired BOTTLE pose: upright (local +Z up -- the asset's long axis, neck up, matching
 	// every recorded successful insertion), origin at socket + grasp_aware_bottle_offset_.
 	// The spin about world Z is a free DOF (the bottle is axis-symmetric); choose it so the
@@ -1110,6 +1144,34 @@ std::vector<geometry_msgs::msg::Pose> ConveyorFeedingUtils::compute_grasp_aware_
 		candidates.push_back(ee_pose);
 	}
 	return candidates;
+}
+
+tf2::Transform ConveyorFeedingUtils::compute_canonical_in_hand_transform()
+{
+	// Analytic bottle-in-EE (virtual_ee_link) transform for the CANONICAL side-suction grasp,
+	// built purely from physical geometry so the derived insert pose is radius-aware. Fed through
+	// the SAME insert_candidates_from_bottle_in_ee() derivation as the measured grasp-aware path.
+	//
+	// Construction (verified to reproduce the fixed calibrated pose EXACTLY at spin 0):
+	//  - rotation = inverse(q_cal): with q_be = T_eb.rotation.inverse() = q_cal, the spin term
+	//    B = <k*q_cal, q_cal> = 0 for the horizontal-gripper calibrated orientation, so phi* = 0
+	//    is selected and the derived EE orientation == q_cal.
+	//  - origin places the EE origin at v = (radial_overhang, 0, grip_offset) in the BOTTLE frame:
+	//      radial_overhang = bottle_radius - suction_tip_compliance + seat_cup_stretch
+	//        (the horizontal cup->bottle-axis overhang: one radius, minus the planning frame's
+	//         3.7 mm reach past the rigid tip, plus the 1.1 mm bond stretch),
+	//      grip_offset      = axial cup contact offset along the bottle long axis.
+	//    Roll about the long axis is arbitrary (irrelevant) -- taken as 0 here; the free world-Z
+	//    spin search absorbs it. At the baseline bottle (r=0.0176) v=(0.015,0,0.012), reproducing
+	//    socket + moveit_insert_offset_xyz [0.015,0,0.09] (= v + grasp_aware_bottle_offset_[0,0,0.078]).
+	tf2::Quaternion q_cal(moveit_insert_orientation_[0], moveit_insert_orientation_[1],
+	                      moveit_insert_orientation_[2], moveit_insert_orientation_[3]);
+	tf2::Quaternion q_eb = q_cal.inverse();
+	const double radial_overhang = bottle_radius_ - suction_tip_compliance_ + seat_cup_stretch_;
+	const tf2::Vector3 v(radial_overhang, 0.0, grip_offset_);   // EE origin in the bottle frame
+	// T_eb has origin t_eb with -inverse(R_eb)*t_eb = v  =>  t_eb = -R_eb * v.
+	const tf2::Vector3 t_eb = -tf2::quatRotate(q_eb, v);
+	return tf2::Transform(q_eb, t_eb);
 }
 
 bool ConveyorFeedingUtils::get_grasped_status(int timeout_sec)

@@ -10,6 +10,7 @@
 #include <std_msgs/msg/bool.hpp>
 #include <sensor_msgs/msg/joy.hpp>
 #include <moveit_msgs/srv/get_position_ik.hpp>
+#include <tf2/LinearMath/Transform.h>
 #include <chrono>
 #include <memory>
 #include <atomic>
@@ -30,7 +31,11 @@ namespace conveyor_feeding_utils
                          bool moveit_insert_descent_collision_check = true,
                          int moveit_insert_fallback_max_waypoints = 85, bool moveit_insert_validate_descent = true,
                          bool grasp_aware_insertion = false, std::string in_hand_pose_topic = "grasp_in_hand",
-                         std::array<double, 3> grasp_aware_bottle_offset = {0.0, 0.0, 0.078}); // Constructor
+                         std::array<double, 3> grasp_aware_bottle_offset = {0.0, 0.0, 0.078},
+                         bool pick_depth_flush = false, double pick_depth_compliance = 0.0037,
+                         bool moveit_insert_radius_aware = false,
+                         double bottle_radius = 0.0176, double grip_offset = 0.012,
+                         double suction_tip_compliance = 0.0037, double seat_cup_stretch = 0.0011); // Constructor
 
     ~ConveyorFeedingUtils(); // Destructor
 
@@ -111,6 +116,26 @@ namespace conveyor_feeding_utils
         std::vector<geometry_msgs::msg::Pose> compute_grasp_aware_insert_candidates(
             const geometry_msgs::msg::Pose& socket);
 
+        /** \brief Core of the insert-candidate derivation, shared by the MEASURED (grasp-aware)
+            and CANONICAL (radius-aware fixed-mode) paths: given the bottle-in-EE transform
+            T_ee_bottle, return EE (virtual_ee_link) target candidates that place the bottle upright
+            at socket + grasp_aware_bottle_offset_, with the free world-Z spin candidates ordered by
+            closeness to the calibrated orientation. EE target = T_world_bottle * inverse(T_ee_bottle). */
+        std::vector<geometry_msgs::msg::Pose> insert_candidates_from_bottle_in_ee(
+            const geometry_msgs::msg::Pose& socket, const tf2::Transform& T_ee_bottle);
+
+        /** \brief Build the CANONICAL bottle-in-EE (virtual_ee_link) transform analytically from
+            the physical geometry constants (bottle_radius_, grip_offset_, suction_tip_compliance_,
+            seat_cup_stretch_), for the radius-aware fixed-mode insertion. Fed through the SAME
+            T_we = T_wb * inverse(T_ee_bottle) derivation as the measured grasp-aware path, so both
+            modes share one radius-aware code path. Rotation = inverse(calibrated insert orientation)
+            so the derived orientation reproduces the calibrated one at spin 0; origin places the EE
+            origin at (radial_overhang, 0, grip_offset) in the bottle frame, radial_overhang =
+            bottle_radius - suction_tip_compliance + seat_cup_stretch. Roll about the bottle long
+            axis is arbitrary (irrelevant) -- the free world-Z spin search selects the orientation.
+            At the baseline bottle this reproduces moveit_insert_offset_xyz exactly (regression anchor). */
+        tf2::Transform compute_canonical_in_hand_transform();
+
         /** \brief Compute an IK solution (via the /compute_ik service) for an EE pose, seeded
             from the current arm config so the returned branch is the natural one nearest the
             current pose. Used to reach a pose via a joint-space move on the natural branch
@@ -171,6 +196,14 @@ namespace conveyor_feeding_utils
         // minus the canonical grip_offset (0.012); XY centred (the 0.015 offset_x is exactly
         // the wrist->bottle overhang along the horizontal tool axis, cancelled in bottle terms).
         std::array<double, 3> grasp_aware_bottle_offset_;
+        // --- Physical bottle / suction-tip geometry (source-of-truth; radius-aware pick+insert) ---
+        bool pick_depth_flush_;            // press the pick to surface-flush (needs best_grasp at surface)
+        double pick_depth_compliance_;     // press depth (m); default = suction_tip_compliance
+        bool moveit_insert_radius_aware_;  // route fixed-mode insert through the canonical radius-aware transform
+        double bottle_radius_;             // cup-contact radius of the gripped bottle (m)
+        double grip_offset_;               // cup contact offset ALONG the bottle long axis (axial, m)
+        double suction_tip_compliance_;    // virtual_ee_link (0.305) is this far past the rigid cup tip (0.3013)
+        double seat_cup_stretch_;          // cup stretch at bond (mirrors Isaac SEAT_CUP_STRETCH)
         // Latest in-hand pose (bottle in wrist_3_link frame). frame_id gates validity: Isaac
         // publishes "wrist_3_link" while a bottle is bonded and "none" otherwise.
         rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr sub_in_hand_pose_;

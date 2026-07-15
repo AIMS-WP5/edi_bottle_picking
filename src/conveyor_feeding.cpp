@@ -43,6 +43,15 @@ std::string in_hand_pose_topic = config["in_hand_pose_topic"]
     ? config["in_hand_pose_topic"].as<std::string>() : "grasp_in_hand";
 std::vector<double> grasp_aware_bottle_offset = config["grasp_aware_bottle_offset_xyz"]
     ? config["grasp_aware_bottle_offset_xyz"].as<std::vector<double>>() : std::vector<double>{0.0, 0.0, 0.078};
+// Physical bottle / suction-tip geometry (radius-aware pick + insert). Defaults match the
+// baseline bottle_v3 asset; a different-radius bottle only needs bottle_radius changed.
+bool pick_depth_flush = config["pick_depth_flush"] ? config["pick_depth_flush"].as<bool>() : false;
+double pick_depth_compliance = config["pick_depth_compliance"] ? config["pick_depth_compliance"].as<double>() : 0.0037;
+bool moveit_insert_radius_aware = config["moveit_insert_radius_aware"] ? config["moveit_insert_radius_aware"].as<bool>() : false;
+double bottle_radius = config["bottle_radius"] ? config["bottle_radius"].as<double>() : 0.0176;
+double grip_offset = config["grip_offset"] ? config["grip_offset"].as<double>() : 0.012;
+double suction_tip_compliance = config["suction_tip_compliance"] ? config["suction_tip_compliance"].as<double>() : 0.0037;
+double seat_cup_stretch = config["seat_cup_stretch"] ? config["seat_cup_stretch"].as<double>() : 0.0011;
 
 int main(int argc, char ** argv)
 {
@@ -122,6 +131,22 @@ int main(int argc, char ** argv)
   RCLCPP_INFO(LOGGER, "conveyor_feeding: grasp_aware_insertion = %s",
               grasp_aware_insertion ? "true" : "false");
 
+  // Pick-depth flush + radius-aware insert: YAML defaults, overridable by launch params
+  // (same pattern as grasp_aware_insertion).
+  if (!application.node_->has_parameter("pick_depth_flush")) {
+    application.node_->declare_parameter("pick_depth_flush", pick_depth_flush);
+  }
+  pick_depth_flush = application.node_->get_parameter("pick_depth_flush").as_bool();
+  if (!application.node_->has_parameter("moveit_insert_radius_aware")) {
+    application.node_->declare_parameter("moveit_insert_radius_aware", moveit_insert_radius_aware);
+  }
+  moveit_insert_radius_aware = application.node_->get_parameter("moveit_insert_radius_aware").as_bool();
+  RCLCPP_INFO(LOGGER, "conveyor_feeding: pick_depth_flush = %s (compliance %.4f m), moveit_insert_radius_aware = %s "
+              "(bottle_radius %.4f, grip_offset %.4f, suction_tip_compliance %.4f, seat_cup_stretch %.4f)",
+              pick_depth_flush ? "true" : "false", pick_depth_compliance,
+              moveit_insert_radius_aware ? "true" : "false",
+              bottle_radius, grip_offset, suction_tip_compliance, seat_cup_stretch);
+
   // socket_pose_topic + MoveIt-mode geometry are YAML-only (no launch override needed).
   std::array<double, 3> insert_offset = {0.0, 0.0, 0.0};
   for (size_t i = 0; i < 3 && i < moveit_insert_offset.size(); ++i) insert_offset[i] = moveit_insert_offset[i];
@@ -143,7 +168,9 @@ int main(int argc, char ** argv)
                                               insertion_mode, socket_pose_topic, insert_offset, moveit_insert_above_dz, insert_orientation,
                                               moveit_insert_descent_collision_check,
                                               moveit_insert_fallback_max_waypoints, moveit_insert_validate_descent,
-                                              grasp_aware_insertion, in_hand_pose_topic, ga_bottle_offset);
+                                              grasp_aware_insertion, in_hand_pose_topic, ga_bottle_offset,
+                                              pick_depth_flush, pick_depth_compliance, moveit_insert_radius_aware,
+                                              bottle_radius, grip_offset, suction_tip_compliance, seat_cup_stretch);
 
   rclcpp::Duration d = rclcpp::Duration::from_seconds(1.0);
   if(!application.gripper_action_client_ptr->wait_for_action_server(d.to_chrono<std::chrono::duration<double>>())) {

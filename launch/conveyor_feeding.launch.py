@@ -13,6 +13,8 @@ def generate_launch_description():
     planning_pipeline = LaunchConfiguration("planning_pipeline")
     retime_plans = LaunchConfiguration("retime_plans")
     grasp_aware_insertion = LaunchConfiguration("grasp_aware_insertion")
+    pick_depth_flush = LaunchConfiguration("pick_depth_flush")
+    moveit_insert_radius_aware = LaunchConfiguration("moveit_insert_radius_aware")
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -78,6 +80,24 @@ def generate_launch_description():
                         "for Isaac's --grip-in-place. Falls back to the fixed pose if no valid "
                         "in-hand transform is available. Overrides the YAML value.",
         ),
+        DeclareLaunchArgument(
+            "pick_depth_flush",
+            default_value="false",
+            description="false (default) = pick grasp target unchanged. true = press the grasp "
+                        "target 'pick_depth_compliance' m deeper so the rigid cup tip meets the "
+                        "bottle surface flush -- intended together with Isaac's "
+                        "--best-grasp-at-surface (best_grasp published at the surface). Overrides "
+                        "the YAML value.",
+        ),
+        DeclareLaunchArgument(
+            "moveit_insert_radius_aware",
+            default_value="false",
+            description="MoveIt insertion mode only, and only when grasp_aware_insertion is false. "
+                        "false (default) = the literal fixed moveit_insert_offset_xyz pose. true = "
+                        "derive the fixed-mode insert pose through the canonical radius-aware "
+                        "transform (tracks bottle_radius; reproduces the fixed pose at the baseline "
+                        "bottle). Overrides the YAML value.",
+        ),
         # Start the actual move_group node/action server
         Node(
             package="edi_bottle_picking",
@@ -92,6 +112,8 @@ def generate_launch_description():
                 "planning_pipeline": ParameterValue(planning_pipeline, value_type=str),
                 "retime_plans": ParameterValue(retime_plans, value_type=bool),
                 "grasp_aware_insertion": ParameterValue(grasp_aware_insertion, value_type=bool),
+                "pick_depth_flush": ParameterValue(pick_depth_flush, value_type=bool),
+                "moveit_insert_radius_aware": ParameterValue(moveit_insert_radius_aware, value_type=bool),
             }],
         ),
     ])
