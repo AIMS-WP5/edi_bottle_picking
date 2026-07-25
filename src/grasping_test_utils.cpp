@@ -19,6 +19,10 @@ GraspingTestUtils::GraspingTestUtils(manipulator_interface::ManipulatorInterface
 	// flip the joint-drive gains; on real/URSim the gain-flip is a best-effort no-op.
 	control_switcher_ = std::make_unique<edi_bottle_picking::ControlModeSwitcher>(
 		manipulator.node_, simulation_, "joint_trajectory_controller");
+	// Propagate this driver's debug flag (config/grasping_test_config.yaml, default true) into
+	// the shared step-gate, so the cartesian_goal prompts keep stepping for operators who run
+	// this scenario interactively -- they used to block unconditionally.
+	manipulator.enable_debug_prompts("/grasping_test/debug", debug);
 }
 
 GraspingTestUtils::~GraspingTestUtils()
@@ -260,7 +264,9 @@ bool GraspingTestUtils::pick_up()
 	if (!success_) {
 		RCLCPP_ERROR(LOGGER, "Bottle not grasped!");
 		command_vacuum(false);
-		manipulator_.world_marker_->prompt("press 'Next' to move back above box");
+		// Was an ungated world_marker_->prompt(): blocked even with debug:false, wedging an
+		// unattended run on the grasp-failure path.
+		manipulator_.maybe_prompt("press 'Next' to move back above box");
 		success_ = manipulator_.predefined_pose("above_box_1");
 		return 0;
 	}

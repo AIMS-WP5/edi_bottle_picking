@@ -59,7 +59,7 @@ ConveyorFeedingUtils::ConveyorFeedingUtils(manipulator_interface::ManipulatorInt
     bool grasp_aware_insertion, std::string in_hand_pose_topic, std::array<double, 3> grasp_aware_bottle_offset,
     bool pick_depth_flush, double pick_depth_compliance, bool moveit_insert_radius_aware,
     double bottle_radius, double grip_offset, double suction_tip_compliance, double seat_cup_stretch)
-    : manipulator_(manipulator), debug_(debug), simulation_(is_isaac), max_pick_attempts_(max_pick_attempts), default_controller_(default_controller),
+    : manipulator_(manipulator), simulation_(is_isaac), max_pick_attempts_(max_pick_attempts), default_controller_(default_controller),
       insertion_mode_(insertion_mode), socket_pose_topic_(socket_pose_topic), moveit_insert_offset_(moveit_insert_offset), moveit_insert_above_dz_(moveit_insert_above_dz),
       moveit_insert_orientation_(moveit_insert_orientation), moveit_insert_descent_collision_check_(moveit_insert_descent_collision_check),
       moveit_insert_fallback_max_waypoints_(moveit_insert_fallback_max_waypoints), moveit_insert_validate_descent_(moveit_insert_validate_descent),
@@ -88,24 +88,11 @@ ConveyorFeedingUtils::ConveyorFeedingUtils(manipulator_interface::ManipulatorInt
 	isaac_vacuum_client_ = manipulator.node_->create_client<std_srvs::srv::SetBool>("/vacuum_gripper/command");
 	ik_client_ = manipulator.node_->create_client<moveit_msgs::srv::GetPositionIK>("/compute_ik");
 
-	// Live debug toggle: std_msgs/Bool on /conveyor_feeding/debug enables/disables the per-stage
-	// 'Next' prompts while the scenario runs (consumed by maybe_prompt).
-	debug_sub_ = manipulator.node_->create_subscription<std_msgs::msg::Bool>(
-		"/conveyor_feeding/debug", 10,
-		[this](const std_msgs::msg::Bool::SharedPtr m) {
-			debug_.store(m->data);
-			RCLCPP_INFO(LOGGER, "debug %s via /conveyor_feeding/debug",
-			            m->data ? "ENABLED (pausing at prompts)" : "DISABLED (free-run)");
-		});
-	// The RViz 'Next' button publishes sensor_msgs/Joy with buttons[1]=1 on /rviz_visual_tools_gui;
-	// watch it so maybe_prompt can step without the (uninterruptible) world_marker_->prompt().
-	gui_sub_ = manipulator.node_->create_subscription<sensor_msgs::msg::Joy>(
-		"/rviz_visual_tools_gui", 10,
-		[this](const sensor_msgs::msg::Joy::SharedPtr m) {
-			if (m->buttons.size() > 1 && m->buttons[1]) {
-				next_pressed_.store(true);
-			}
-		});
+	// Install the shared step-gate on the manipulator. Gating it there (rather than keeping a
+	// private copy here) is what lets cartesian_goal()'s own prompts honour the same flag --
+	// they used to block unconditionally, which is why the bringup script needed a background
+	// 'autocont' publisher to latch RViz into autonomous mode.
+	manipulator.enable_debug_prompts("/conveyor_feeding/debug", debug);
 }
 
 ConveyorFeedingUtils::~ConveyorFeedingUtils()
@@ -164,34 +151,9 @@ bool ConveyorFeedingUtils::add_box() {
 
 void ConveyorFeedingUtils::maybe_prompt(const std::string& msg)
 {
-	// Debug step-gate. With debug on, block until the user clicks 'Next' in the RViz
-	// RvizVisualToolsGui panel (buttons[1] on /rviz_visual_tools_gui). The wait is interruptible:
-	// publishing false on /conveyor_feeding/debug frees the run mid-wait, so a live toggle-off
-	// needs no final click. With debug off it announces the stage ("PROCEEDING TO: ...") and
-	// returns, so the scenario cycles unattended but stays traceable in the log. Polls
-	// wall-clock so it behaves the same regardless of use_sim_time.
-
-	// Call sites phrase msg as "press 'Next' to <action>"; strip the lead-in so the free-run
-	// log reads "PROCEEDING TO: <action>".
-	static const std::string kPrefix = "press 'Next' to ";
-	const std::string action = (msg.rfind(kPrefix, 0) == 0) ? msg.substr(kPrefix.size()) : msg;
-
-	if (!debug_.load()) {
-		RCLCPP_INFO(LOGGER, "PROCEEDING TO: %s", action.c_str());
-		return;
-	}
-	RCLCPP_INFO(LOGGER, "%s  [debug] -- click 'Next' in RViz, or "
-	                    "`ros2 topic pub --once /conveyor_feeding/debug std_msgs/msg/Bool \"{data: false}\"` to free-run",
-	            msg.c_str());
-	next_pressed_.store(false);
-	while (rclcpp::ok() && debug_.load() && !next_pressed_.load()) {
-		std::this_thread::sleep_for(50ms);
-	}
-	if (!debug_.load()) {
-		// Freed by a live debug toggle-off rather than a 'Next' click -> now auto-proceeding.
-		RCLCPP_INFO(LOGGER, "PROCEEDING TO: %s", action.c_str());
-	}
-	next_pressed_.store(false);
+	// Thin forwarder to the shared gate installed on the manipulator by our constructor; see
+	// manipulator_interface::DebugStepGate for the semantics.
+	manipulator_.maybe_prompt(msg);
 }
 
 geometry_msgs::msg::Pose ConveyorFeedingUtils::get_next_published_pose(std::string topic_name, bool stamped_topic, int timeout_sec)

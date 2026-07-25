@@ -300,22 +300,18 @@ if (( RUN_PICK )); then
     # topic was renamed to /socket_center -- so it always burned its full 60 s timeout.)
     echo "== phase 3: pick (conveyor_feeding, insertion_mode=$INSERTION_MODE) =="
     newwin pick "ros2 launch edi_bottle_picking conveyor_feeding.launch.py use_sim_time:=true debug:=$DEBUG iterations:=$BOTTLE_PICKING_ITERATIONS insertion_mode:=$INSERTION_MODE planning_pipeline:=$PLANNING_PIPELINE retime_plans:=$RETIME_PLANS grasp_aware_insertion:=$GRASP_AWARE pick_depth_flush:=$PICK_DEPTH_FLUSH moveit_insert_radius_aware:=$RADIUS_AWARE_INSERT"
-    # manipulator_interface::cartesian_goal() has an UNCONDITIONAL world_marker_->prompt() before
-    # executing the cartesian plan (not gated by our debug flag). In no-debug mode, put
-    # rviz_visual_tools into autonomous mode -- the GUI 'Continue' button = buttons[2] on
-    # /rviz_visual_tools_gui -- so that prompt (and any other world_marker_ prompt) auto-proceeds,
-    # without modifying the shared manipulator_interface code. Autonomous latches on first
-    # receipt; publish at 1 Hz so it lands once conveyor_feeding's RemoteControl has subscribed.
-    if [[ "$DEBUG" == "false" ]]; then
-        newwin autocont "ros2 topic pub -r 1 /rviz_visual_tools_gui sensor_msgs/msg/Joy '{buttons: [0,0,1,0,0,0,0,0,0]}'"
-    fi
+    # (No 'autocont' window any more. manipulator_interface::cartesian_goal() used to issue an
+    # UNCONDITIONAL world_marker_->prompt() before executing the cartesian plan, which no-debug
+    # runs could only escape by publishing buttons[2] ('Continue') on /rviz_visual_tools_gui at
+    # 1 Hz to latch rviz_visual_tools into autonomous mode. Those prompts now go through the
+    # shared manipulator_interface::DebugStepGate and honour debug:= like every other stage.)
 fi
 
 echo
 if [[ "$BOTTLE_PICKING_ITERATIONS" == "-1" ]]; then ITERS_DISP="config default"; else ITERS_DISP="$BOTTLE_PICKING_ITERATIONS"; fi
 echo "tmux session '$SESSION' is up."
 echo "  insertion_mode=$INSERTION_MODE  planner=$PLANNER  grasp_aware=$GRASP_AWARE  pick_depth_flush=$PICK_DEPTH_FLUSH  radius_aware_insert=$RADIUS_AWARE_INSERT  model=$MODEL_NAME  steps=$STEP_COUNT  collision_check=$COLLISION_CHECK  max_velocity=$MAX_VELOCITY  gripper=$GRIPPER_TYPE  debug=$DEBUG  bottle_picking_iterations=$ITERS_DISP"
-echo "  windows: control moveit velbridge vacbridge$( [[ $INSERTION_MODE == moveit ]] && echo ' padframe' || echo ' dp')$( [[ $PLANNER == cumotion ]] && echo ' cumotion')$( ((RUN_BESTGRASP)) && echo ' bestgrasp')$( ((RUN_PICK)) && echo ' pick')$( ((RUN_PICK)) && [[ $DEBUG == false ]] && echo ' autocont')"
+echo "  windows: control moveit velbridge vacbridge$( [[ $INSERTION_MODE == moveit ]] && echo ' padframe' || echo ' dp')$( [[ $PLANNER == cumotion ]] && echo ' cumotion')$( ((RUN_BESTGRASP)) && echo ' bestgrasp')$( ((RUN_PICK)) && echo ' pick')"
 if [[ "$INSERTION_MODE" == "moveit" ]]; then
     echo "  NOTE: MoveIt comparison mode -- DP node not launched. For a clean comparison start Isaac with:"
     echo "        python simplified_ur5_scene.py --omnigraph --pad-adj-x 0 --pad-adj-y 0"
@@ -323,7 +319,10 @@ fi
 echo "  logs:    $LOGDIR/<window>.log"
 echo "  navigate: Ctrl-b w (picker) | Ctrl-b <n> | Ctrl-b n / Ctrl-b p"
 echo "  detach:   Ctrl-b d        tear down: $0 down"
-echo "  the 'pick' window parks at the first RViz 'Next' prompt -- step it with RvizVisualToolsGui."
+if [[ "$DEBUG" == "true" ]]; then
+    echo "  the 'pick' window parks at the first RViz 'Next' prompt -- step it with RvizVisualToolsGui,"
+    echo "  or free-run mid-wait: ros2 topic pub --once /conveyor_feeding/debug std_msgs/msg/Bool '{data: false}'"
+fi
 
 if [[ -n "${TMUX:-}" ]]; then
     echo "(already inside tmux; not auto-attaching. switch: tmux switch-client -t $SESSION)"

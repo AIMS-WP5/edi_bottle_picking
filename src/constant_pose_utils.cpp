@@ -29,6 +29,10 @@ ConstantPoseUtils::ConstantPoseUtils(manipulator_interface::ManipulatorInterface
 	control_switcher_ = std::make_unique<edi_bottle_picking::ControlModeSwitcher>(
 		manipulator.node_, is_isaac, "joint_trajectory_controller");
 	isaac_vacuum_client_ = manipulator.node_->create_client<std_srvs::srv::SetBool>("/vacuum_gripper/command");
+	// Propagate this driver's debug flag (config/constant_pose_config.yaml, default true) into
+	// the shared step-gate, so the cartesian_goal prompts keep stepping for operators who run
+	// this scenario interactively -- they used to block unconditionally.
+	manipulator.enable_debug_prompts("/constant_pose/debug", debug);
 }
 
 ConstantPoseUtils::~ConstantPoseUtils()

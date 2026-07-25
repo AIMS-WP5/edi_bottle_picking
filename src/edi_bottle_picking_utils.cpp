@@ -10,7 +10,10 @@ const rclcpp::Logger LOGGER = rclcpp::get_logger("edi_bottle_picking_utils");
 EdiBottlePickingUtils::EdiBottlePickingUtils(manipulator_interface::ManipulatorInterface& manipulator, bool debug)
     : manipulator_(manipulator), debug_(debug)
 {
-    // Constructor implementation
+	// Propagate this driver's debug flag into the shared step-gate, so the cartesian_goal
+	// prompts keep stepping for operators who run this scenario interactively -- they used to
+	// block unconditionally. (edi_bottle_picking.cpp constructs us with a hard-coded true.)
+	manipulator.enable_debug_prompts("/bottle_picking/debug", debug);
 }
 
 EdiBottlePickingUtils::~EdiBottlePickingUtils()

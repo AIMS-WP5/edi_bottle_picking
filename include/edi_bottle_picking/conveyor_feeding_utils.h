@@ -75,10 +75,9 @@ namespace conveyor_feeding_utils
         /** \brief Best-effort SetBool call to the Isaac vacuum bridge (no-op if absent). */
         void set_isaac_vacuum(bool grip);
 
-        /** \brief Debug step-gate. When debug is enabled (constructor arg, live-toggled via
-            /conveyor_feeding/debug), block until the user clicks 'Next' in the RViz
-            RvizVisualToolsGui panel. The wait is interruptible: toggling debug off frees the
-            run mid-wait with no final click. No-op when debug is disabled. */
+        /** \brief Debug step-gate; forwards to the shared manipulator_interface::DebugStepGate
+            installed on manipulator_ by our constructor (topic /conveyor_feeding/debug).
+            Kept as a thin forwarder so the existing call sites read unchanged. */
         void maybe_prompt(const std::string& msg);
 
         /** \brief One full pick attempt: read the grasp pose, move above the box (above_box_1),
@@ -157,8 +156,6 @@ namespace conveyor_feeding_utils
                                                              const std::optional<std::vector<double>>& explicit_seed = std::nullopt);
 
         manipulator_interface::ManipulatorInterface& manipulator_;
-        std::atomic<bool> debug_;                 // live-toggled via /conveyor_feeding/debug
-        std::atomic<bool> next_pressed_{false};   // set by RViz 'Next' on /rviz_visual_tools_gui
         bool success_, simulation_;
         int max_pick_attempts_;                   // bounded pick retries (config: max_pick_attempts)
         rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr sub_grasp_pose_;
@@ -168,8 +165,6 @@ namespace conveyor_feeding_utils
         rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr sub_socket_pose_;
         geometry_msgs::msg::Pose curr_socket_pose_;
         std::atomic<bool> socket_received_{false};
-        rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr debug_sub_;
-        rclcpp::Subscription<sensor_msgs::msg::Joy>::SharedPtr gui_sub_;
         rclcpp::Client<std_srvs::srv::SetBool>::SharedPtr isaac_vacuum_client_;
         rclcpp::Client<moveit_msgs::srv::GetPositionIK>::SharedPtr ik_client_;  // /compute_ik (move_group)
         geometry_msgs::msg::Pose curr_grasp_pose_;
