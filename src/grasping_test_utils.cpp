@@ -8,8 +8,10 @@ namespace grasping_test_utils
 
 const rclcpp::Logger LOGGER = rclcpp::get_logger("grasping_test_utils");
 
-GraspingTestUtils::GraspingTestUtils(manipulator_interface::ManipulatorInterface& manipulator, std::string grasp_pose_topic, bool debug, bool simulation, bool run_dp_switchover)
-    : manipulator_(manipulator), debug_(debug), simulation_(simulation), run_dp_switchover_(run_dp_switchover)
+GraspingTestUtils::GraspingTestUtils(manipulator_interface::ManipulatorInterface& manipulator, std::string grasp_pose_topic, bool debug, bool simulation, bool run_dp_switchover,
+    edi_bottle_picking::ScenarioPoses poses)
+    : manipulator_(manipulator), debug_(debug), simulation_(simulation), run_dp_switchover_(run_dp_switchover),
+      poses_(poses)
 {
 	sub_grasp_pose_ = manipulator.node_->create_subscription<geometry_msgs::msg::PoseStamped>(
 		grasp_pose_topic, 10, std::bind(&GraspingTestUtils::grasp_pose_callback, this, _1)
@@ -176,7 +178,7 @@ bool GraspingTestUtils::pick_up()
     if(debug_){
         manipulator_.world_marker_->prompt("press 'Next' to go to position above pickup place");
     }
-    success_ = manipulator_.predefined_pose("wait_slam");
+    success_ = manipulator_.predefined_pose(poses_.initial);
     if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
@@ -232,7 +234,7 @@ bool GraspingTestUtils::pick_up()
 	if(debug_){
 		manipulator_.world_marker_->prompt("press 'Next' to go above box");
 	}
-	success_ = manipulator_.predefined_pose("above_box_1");
+	success_ = manipulator_.predefined_pose(poses_.above_box);
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
@@ -244,13 +246,10 @@ bool GraspingTestUtils::pick_up()
 		return 0;
 	}
 
-	success_ = manipulator_.cartesian_goal(pick_poses[1], 15);
-	if(!success_){
-		RCLCPP_ERROR(LOGGER, "Pick action failed!");
-		return 0;
-	}
-
-	manipulator_.attach_collision_object(coll_obj);
+	// Grip BEFORE the descent so the pump's spin-up overlaps the approach and the cup is
+	// already under suction at contact -- see the matching comment in conveyor_feeding_utils
+	// (this harness must share the pick sequence for its numbers to be representative).
+	// Upstream 15fe46a ("start suction 1 step faster").
 	success_ = command_vacuum(true);
 	if (!success_) {
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
@@ -258,6 +257,14 @@ bool GraspingTestUtils::pick_up()
 	} else {
 		RCLCPP_INFO(LOGGER, "Suction enabled!");
 	}
+
+	success_ = manipulator_.cartesian_goal(pick_poses[1], 15);
+	if(!success_){
+		RCLCPP_ERROR(LOGGER, "Pick action failed!");
+		return 0;
+	}
+
+	manipulator_.attach_collision_object(coll_obj);
 
 	std::this_thread::sleep_for(100ms);
 	success_ = get_grasped_status();
@@ -267,7 +274,7 @@ bool GraspingTestUtils::pick_up()
 		// Was an ungated world_marker_->prompt(): blocked even with debug:false, wedging an
 		// unattended run on the grasp-failure path.
 		manipulator_.maybe_prompt("press 'Next' to move back above box");
-		success_ = manipulator_.predefined_pose("above_box_1");
+		success_ = manipulator_.predefined_pose(poses_.above_box);
 		return 0;
 	}
 
@@ -280,7 +287,7 @@ bool GraspingTestUtils::pick_up()
 	if(debug_){
 		manipulator_.world_marker_->prompt("press 'Next' to move back above box");
 	}
-	success_ = manipulator_.predefined_pose("above_box_1");
+	success_ = manipulator_.predefined_pose(poses_.above_box);
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
@@ -289,7 +296,7 @@ bool GraspingTestUtils::pick_up()
 	if(debug_){
 		manipulator_.world_marker_->prompt("press 'Next' to move to ai start");
 	}
-	success_ = manipulator_.predefined_pose("ai_start2");
+	success_ = manipulator_.predefined_pose(poses_.dp_handoff);
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
@@ -318,7 +325,7 @@ bool GraspingTestUtils::pick_up()
 	if(debug_){
 		manipulator_.world_marker_->prompt("press 'Next' to move back to starting position");
 	}
-	success_ = manipulator_.predefined_pose("wait_slam");
+	success_ = manipulator_.predefined_pose(poses_.initial);
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
@@ -332,7 +339,7 @@ bool GraspingTestUtils::put_down()
 	if(debug_){
 		manipulator_.world_marker_->prompt("press 'Next' to drop off grasped bottle");
 	}
-	success_ = manipulator_.predefined_pose("inter_floor_4");
+	success_ = manipulator_.predefined_pose(poses_.dropoff);
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Putting back failed!");
 		return 0;

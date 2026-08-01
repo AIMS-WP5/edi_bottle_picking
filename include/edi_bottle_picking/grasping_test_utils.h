@@ -4,6 +4,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <manipulator_interface/manipulator_interface.h>
 #include <edi_bottle_picking/control_mode_switcher.h>
+#include <edi_bottle_picking/scenario_poses.h>
 #include <ur_msgs/msg/io_states.hpp>
 #include <ur_msgs/msg/digital.hpp>
 #include <std_srvs/srv/set_bool.hpp>
@@ -16,7 +17,8 @@ namespace grasping_test_utils
 	class GraspingTestUtils
     {
     public:
-    GraspingTestUtils(manipulator_interface::ManipulatorInterface& manipulator, std::string grasp_pose_topic, bool debug = false, bool simulation = false, bool run_dp_switchover = true); // Constructor
+    GraspingTestUtils(manipulator_interface::ManipulatorInterface& manipulator, std::string grasp_pose_topic, bool debug = false, bool simulation = false, bool run_dp_switchover = true,
+                      edi_bottle_picking::ScenarioPoses poses = {}); // Constructor
 
     ~GraspingTestUtils(); // Destructor
 
@@ -52,6 +54,8 @@ namespace grasping_test_utils
         bool debug_, success_;
         bool simulation_;
         bool run_dp_switchover_;
+        /** Named SRDF poses; see scenario_poses.h for the edi-vs-isaac cell split. */
+        edi_bottle_picking::ScenarioPoses poses_;
         rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr sub_grasp_pose_;
         rclcpp::Client<std_srvs::srv::SetBool>::SharedPtr isaac_vacuum_client_;
         std::unique_ptr<edi_bottle_picking::ControlModeSwitcher> control_switcher_;

@@ -58,8 +58,9 @@ ConveyorFeedingUtils::ConveyorFeedingUtils(manipulator_interface::ManipulatorInt
     int moveit_insert_fallback_max_waypoints, bool moveit_insert_validate_descent,
     bool grasp_aware_insertion, std::string in_hand_pose_topic, std::array<double, 3> grasp_aware_bottle_offset,
     bool pick_depth_flush, double pick_depth_compliance, bool moveit_insert_radius_aware,
-    double bottle_radius, double grip_offset, double suction_tip_compliance, double seat_cup_stretch)
-    : manipulator_(manipulator), simulation_(is_isaac), max_pick_attempts_(max_pick_attempts), default_controller_(default_controller),
+    double bottle_radius, double grip_offset, double suction_tip_compliance, double seat_cup_stretch,
+    edi_bottle_picking::ScenarioPoses poses)
+    : manipulator_(manipulator), simulation_(is_isaac), max_pick_attempts_(max_pick_attempts), default_controller_(default_controller), poses_(poses),
       insertion_mode_(insertion_mode), socket_pose_topic_(socket_pose_topic), moveit_insert_offset_(moveit_insert_offset), moveit_insert_above_dz_(moveit_insert_above_dz),
       moveit_insert_orientation_(moveit_insert_orientation), moveit_insert_descent_collision_check_(moveit_insert_descent_collision_check),
       moveit_insert_fallback_max_waypoints_(moveit_insert_fallback_max_waypoints), moveit_insert_validate_descent_(moveit_insert_validate_descent),
@@ -271,10 +272,10 @@ bool ConveyorFeedingUtils::try_pick_bottle()
 	manipulator_.detach_collision_object();
 	manipulator_.remove_collision_object();
 
-	// wait_slam is no longer re-visited at the start of every attempt; it is set once at
+	// The initial pose is no longer re-visited at the start of every attempt; it is set once at
 	// scenario startup (move_to_initial_pose, before the iteration loop). Each attempt now
-	// begins its motion at above_box_1 (below), reached directly from wherever the previous
-	// iteration ended (ai_after_pickup) or from the startup wait_slam on the first iteration.
+	// begins its motion at poses_.above_box (below), reached directly from wherever the previous
+	// iteration ended (poses_.after_pickup) or from the startup poses_.initial on the first iteration.
 	success_ = command_vacuum(false);
 	if (!success_) {
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
@@ -369,14 +370,14 @@ bool ConveyorFeedingUtils::try_pick_bottle()
 	std::vector<geometry_msgs::msg::Pose> pick_poses = manipulator_.create_pick_moves_simple(pick_pose);
 
 	maybe_prompt("press 'Next' to go above box");
-	success_ = manipulator_.predefined_pose("above_box_1");
+	success_ = manipulator_.predefined_pose(poses_.above_box);
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
 	}
 
 	// Reach the approach pose via an IK-seeded joint-space move (seeded from the current
-	// above_box_1 config -> natural branch) instead of a Cartesian move. cartesian_goal uses
+	// above-box config -> natural branch) instead of a Cartesian move. cartesian_goal uses
 	// jump_threshold=0, which can route the approach (a translate + re-orient-to-vertical over an
 	// edge bottle) through a contorted, near-singular branch the controller then fails to track
 	// (state-tolerance abort), stranding the arm wedged in/under the box. The grasp descent below
@@ -389,7 +390,7 @@ bool ConveyorFeedingUtils::try_pick_bottle()
 	// free to rotate, so the check excludes the wrist (joints 3-5). max_seed_delta=1.0: over a
 	// 50-cycle run every legitimate approach measured <= 0.70 rad while the one contorted branch
 	// was 1.72 rad -- a clean gap, so 1.0 rejects it with margin and zero risk to normal picks.
-	// On rejection it fails fast (arm hasn't moved) -> retry re-solves from above_box_1, instead
+	// On rejection it fails fast (arm hasn't moved) -> retry re-solves from the above-box pose, instead
 	// of executing the convoluted approach and then thrashing on an unplannable descent.
 	auto approach_joints = compute_ik_seeded(pick_poses[0], /*max_seed_delta=*/1.0, /*ignore_wrist=*/true);
 	if (!approach_joints.has_value()) {
@@ -402,13 +403,12 @@ bool ConveyorFeedingUtils::try_pick_bottle()
 		return 0;
 	}
 
-	success_ = manipulator_.cartesian_goal(pick_poses[1], 15);
-	if(!success_){
-		RCLCPP_ERROR(LOGGER, "Pick action failed!");
-		return 0;
-	}
-
-	manipulator_.attach_collision_object(coll_obj);
+	// Grip BEFORE the descent, not after it. On real hardware command_vacuum() drives the UR
+	// gripper over the /set_io service and the pump takes time to pull vacuum, so commanding it
+	// here overlaps the spin-up with the (short, straight-down) approach and the cup is already
+	// under suction when it reaches the bottle. Doing it after the descent stalls the tool at
+	// contact waiting for vacuum. No-op in sim, where command_vacuum() short-circuits the UR IO
+	// path and the bond is modelled by the sim bridge. (Upstream df8a8db / 15fe46a.)
 	success_ = command_vacuum(true);
 	if (!success_) {
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
@@ -417,13 +417,23 @@ bool ConveyorFeedingUtils::try_pick_bottle()
 		RCLCPP_INFO(LOGGER, "Suction enabled!");
 	}
 
+	success_ = manipulator_.cartesian_goal(pick_poses[1], 15);
+	if(!success_){
+		RCLCPP_ERROR(LOGGER, "Pick action failed!");
+		return 0;
+	}
+
+	// Attach only once the tool is at the bottle: during the descent above there is nothing in
+	// the gripper yet, so an attached phantom would just block the move it is meant to allow.
+	manipulator_.attach_collision_object(coll_obj);
+
 	std::this_thread::sleep_for(100ms);
 	success_ = get_grasped_status();
 	if (!success_) {
 		RCLCPP_ERROR(LOGGER, "Bottle not grasped!");
 		command_vacuum(false);
 		maybe_prompt("press 'Next' to move back above box");
-		success_ = manipulator_.predefined_pose("above_box_1");
+		success_ = manipulator_.predefined_pose(poses_.above_box);
 		return 0;
 	}
 
@@ -434,7 +444,7 @@ bool ConveyorFeedingUtils::try_pick_bottle()
 	}
 
 	maybe_prompt("press 'Next' to move back above box");
-	success_ = manipulator_.predefined_pose("above_box_1");
+	success_ = manipulator_.predefined_pose(poses_.above_box);
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
@@ -447,10 +457,10 @@ bool ConveyorFeedingUtils::try_pick_bottle()
 bool ConveyorFeedingUtils::move_to_initial_pose()
 {
 	// One-time move to the scenario's initial/home pose at startup (before the iteration loop).
-	// wait_slam is no longer part of the per-iteration cycle; this is the only place it is
+	// The initial pose is no longer part of the per-iteration cycle; this is the only place it is
 	// commanded as a normal move (it is also kept as the safe_retreat() recovery fallback).
-	maybe_prompt("press 'Next' to go to initial pose (wait_slam)");
-	return manipulator_.predefined_pose("wait_slam");
+	maybe_prompt("press 'Next' to go to initial pose (" + poses_.initial + ")");
+	return manipulator_.predefined_pose(poses_.initial);
 }
 
 bool ConveyorFeedingUtils::run()
@@ -458,7 +468,7 @@ bool ConveyorFeedingUtils::run()
 	// Pick a bottle, retrying on failure. A failed attempt can leave the arm down in the box;
 	// safe_retreat() lifts it back out to a plannable ready pose so the retry -- and the next
 	// iteration -- start clean. Without this, one failed pick wedges the arm in the box and every
-	// following iteration fails at its first move (above_box_1 can't be planned out of the box).
+	// following iteration fails at its first move (the above-box pose can't be planned out of the box).
 	bool grasped = false;
 	for (int attempt = 1; attempt <= max_pick_attempts_ && rclcpp::ok(); ++attempt) {
 		if (try_pick_bottle()) { grasped = true; break; }
@@ -488,7 +498,7 @@ bool ConveyorFeedingUtils::run()
 	}
 
 	maybe_prompt("press 'Next' to move to after pickup pose");
-	success_ = manipulator_.predefined_pose("ai_after_pickup");
+	success_ = manipulator_.predefined_pose(poses_.after_pickup);
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		safe_retreat();
@@ -497,13 +507,14 @@ bool ConveyorFeedingUtils::run()
 
 	maybe_prompt("press 'Next' to move to ai start");
 	{
-		// Pin the ai_start2 handoff to OMPL (see PipelineScope). ai_start2 is a named JOINT
+		// Pin the DP handoff (poses_.dp_handoff, canonically ai_start2) to OMPL (see
+		// PipelineScope). It is a named JOINT
 		// target and the segment that follows is start-configuration-sensitive: the DP policy
 		// was trained from the canonical ai_start2 configuration (iteration-8 matrix: cuMotion's
 		// IK-re-solved arrival put cumotion x dp placements ~13 cm off), and in moveit mode this
 		// config seeds the insertion IK. OMPL executes the exact joint target.
 		PipelineScope dp_handoff_scope{manipulator_, "ompl"};
-		success_ = manipulator_.predefined_pose("ai_start2");
+		success_ = manipulator_.predefined_pose(poses_.dp_handoff);
 	}
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
@@ -542,7 +553,7 @@ bool ConveyorFeedingUtils::run()
 	// Release the inserted bottle here, at the insertion point, BEFORE the robot lifts up and
 	// moves away. Previously conveyor_feeding never released after the DP segment, so the
 	// bottle was only dropped at the start of the next iteration (after returning to the
-	// ready poses) -- it stayed attached through ai_start2/ai_after_pickup.
+	// ready poses) -- it stayed attached through the dp_handoff/after_pickup moves.
 	maybe_prompt("press 'Next' to release the inserted bottle");
 	success_ = command_vacuum(false);
 	if (!success_) {
@@ -560,14 +571,14 @@ bool ConveyorFeedingUtils::run()
 	manipulator_.remove_collision_object();
 
 	maybe_prompt("press 'Next' to move back");
-	success_ = manipulator_.predefined_pose("ai_start2");
+	success_ = manipulator_.predefined_pose(poses_.dp_handoff);
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		safe_retreat();
 		return 0;
 	}
 	maybe_prompt("press 'Next' to move back");
-	success_ = manipulator_.predefined_pose("ai_after_pickup");
+	success_ = manipulator_.predefined_pose(poses_.after_pickup);
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		safe_retreat();
@@ -598,11 +609,12 @@ bool ConveyorFeedingUtils::safe_retreat()
 		RCLCPP_WARN(LOGGER, "safe_retreat: vertical lift failed; trying a ready pose anyway");
 	}
 
-	if (manipulator_.predefined_pose("above_box_1")) {
+	if (manipulator_.predefined_pose(poses_.above_box)) {
 		return true;
 	}
-	RCLCPP_WARN(LOGGER, "safe_retreat: could not reach 'above_box_1'; falling back to 'wait_slam'");
-	if (manipulator_.predefined_pose("wait_slam")) {
+	RCLCPP_WARN(LOGGER, "safe_retreat: could not reach '%s'; falling back to '%s'",
+	            poses_.above_box.c_str(), poses_.retreat_fallback.c_str());
+	if (manipulator_.predefined_pose(poses_.retreat_fallback)) {
 		return true;
 	}
 	RCLCPP_ERROR(LOGGER, "safe_retreat: FAILED to reach a safe ready pose");

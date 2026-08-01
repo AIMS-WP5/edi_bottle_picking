@@ -17,6 +17,13 @@ bool debug = config["debug"].as<bool>();
 int total_iterations = config["iterations"].as<int>();
 bool pose_from_topic = config["pose_from_topic"].as<bool>();
 std::string pose_topic_name = config["pose_topic_name"].as<std::string>();
+// Position controller to restore after the DP velocity segment (ca1e3b0 parity):
+// scaled_joint_trajectory_controller on the real robot.
+std::string default_controller = config["default_controller"]
+    ? config["default_controller"].as<std::string>() : "joint_trajectory_controller";
+// Named SRDF poses: YAML defaults here, `pose_set` / per-pose ROS params applied in main()
+// once the node exists. See scenario_poses.h for the edi-vs-isaac cell split.
+edi_bottle_picking::ScenarioPoses scenario_poses = edi_bottle_picking::load_scenario_poses(config);
 
 int main(int argc, char ** argv)
 {
@@ -47,7 +54,10 @@ int main(int argc, char ** argv)
   // use_sim_time signals Isaac Sim (URSim/real run wall-clock); the facade only sends the
   // Isaac drive-gain flip when this is true.
   bool is_isaac = application.node_->get_parameter("use_sim_time").as_bool();
-  ConstantPoseUtils constant_pose_utils(manipulator, pose_from_topic, pose_topic_name, debug, is_isaac);
+  edi_bottle_picking::apply_pose_overrides(application.node_, scenario_poses, "constant_pose");
+
+  ConstantPoseUtils constant_pose_utils(manipulator, pose_from_topic, pose_topic_name, default_controller,
+                                        debug, is_isaac, scenario_poses);
 
   rclcpp::Duration d = rclcpp::Duration::from_seconds(1.0);
   if(!application.gripper_action_client_ptr->wait_for_action_server(d.to_chrono<std::chrono::duration<double>>())) {

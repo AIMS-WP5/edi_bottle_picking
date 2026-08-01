@@ -4,6 +4,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <manipulator_interface/manipulator_interface.h>
 #include <edi_bottle_picking/control_mode_switcher.h>
+#include <edi_bottle_picking/scenario_poses.h>
 #include <ur_msgs/msg/io_states.hpp>
 #include <ur_msgs/msg/digital.hpp>
 #include <std_srvs/srv/set_bool.hpp>
@@ -35,15 +36,17 @@ namespace conveyor_feeding_utils
                          bool pick_depth_flush = false, double pick_depth_compliance = 0.0037,
                          bool moveit_insert_radius_aware = false,
                          double bottle_radius = 0.0176, double grip_offset = 0.012,
-                         double suction_tip_compliance = 0.0037, double seat_cup_stretch = 0.0011); // Constructor
+                         double suction_tip_compliance = 0.0037, double seat_cup_stretch = 0.0011,
+                         edi_bottle_picking::ScenarioPoses poses = {}); // Constructor
 
     ~ConveyorFeedingUtils(); // Destructor
 
-    /** \brief Move once to the scenario's initial/home pose (wait_slam) before the iteration
-        loop starts. wait_slam used to be re-visited at the start of every pick attempt; it is
-        now only the one-time startup pose, so each iteration begins its motion at above_box_1
-        directly. Best-effort: returns the plan result so the caller can warn (not abort) on
-        failure -- the first iteration's above_box_1 move is attempted regardless. */
+    /** \brief Move once to the scenario's initial/home pose (poses_.initial) before the
+        iteration loop starts. That pose used to be re-visited at the start of every pick
+        attempt; it is now only the one-time startup pose, so each iteration begins its motion
+        at poses_.above_box directly. Best-effort: returns the plan result so the caller can
+        warn (not abort) on failure -- the first iteration's above_box move is attempted
+        regardless. */
     bool move_to_initial_pose();
 
     bool run();
@@ -80,15 +83,16 @@ namespace conveyor_feeding_utils
             Kept as a thin forwarder so the existing call sites read unchanged. */
         void maybe_prompt(const std::string& msg);
 
-        /** \brief One full pick attempt: read the grasp pose, move above the box (above_box_1),
-            approach, descend, grip, confirm via get_grasped_status, and retreat to above_box_1.
-            Returns true only if the bottle is grasped and the arm is back at above_box_1. */
+        /** \brief One full pick attempt: read the grasp pose, move above the box
+            (poses_.above_box), approach, descend, grip, confirm via get_grasped_status, and
+            retreat to poses_.above_box. Returns true only if the bottle is grasped and the
+            arm is back above the box. */
         bool try_pick_bottle();
 
         /** \brief Best-effort recovery to a safe, plannable pose after a failed pick: release
             and detach any partial grasp, lift the tool straight up out of the box (a vertical
             Cartesian move -- a joint-space plan would arc out through a wall and fail), then
-            return to above_box_1 (falling back to wait_slam). Prevents one failed pick from
+            return to poses_.above_box (falling back to poses_.retreat_fallback). Prevents one failed pick from
             wedging the robot inside the box and bricking all following iterations. */
         bool safe_retreat();
 
@@ -171,6 +175,9 @@ namespace conveyor_feeding_utils
         // frame_id of the last received grasp pose; empty -> assume the camera frame.
         std::string curr_grasp_frame_;
         std::string default_controller_;
+        /** Named SRDF poses this scenario moves through; see scenario_poses.h for the
+            edi (real cell / robo-codegen-edi) vs isaac (legacy edi_isaacsim) split. */
+        edi_bottle_picking::ScenarioPoses poses_;
         // Insertion strategy: "dp" (NN velocity segment) or "moveit" (comparison: MoveIt
         // position-controlled above-socket move + Cartesian descent). Selected via config.
         std::string insertion_mode_;

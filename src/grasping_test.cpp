@@ -16,6 +16,9 @@ YAML::Node config = YAML::LoadFile(config_file_path);
 bool debug = config["debug"].as<bool>();
 int total_iterations = config["iterations"].as<int>();
 std::string grasp_pose_topic = config["grasp_pose_topic"].as<std::string>();
+// Named SRDF poses: YAML defaults here, `pose_set` / per-pose ROS params applied in main()
+// once the node exists. See scenario_poses.h for the edi-vs-isaac cell split.
+edi_bottle_picking::ScenarioPoses scenario_poses = edi_bottle_picking::load_scenario_poses(config);
 
 int main(int argc, char ** argv)
 {
@@ -53,7 +56,10 @@ int main(int argc, char ** argv)
   RCLCPP_INFO(LOGGER, "grasping_test: simulation=%s, run_dp_switchover=%s",
               simulation ? "ON" : "OFF", run_dp_switchover ? "ON" : "OFF");
 
-  GraspingTestUtils grasping_test_utils(manipulator, grasp_pose_topic, debug, simulation, run_dp_switchover);
+  edi_bottle_picking::apply_pose_overrides(application.node_, scenario_poses, "grasping_test");
+
+  GraspingTestUtils grasping_test_utils(manipulator, grasp_pose_topic, debug, simulation, run_dp_switchover,
+                                        scenario_poses);
 
   rclcpp::Duration d = rclcpp::Duration::from_seconds(1.0);
   if(!application.gripper_action_client_ptr->wait_for_action_server(d.to_chrono<std::chrono::duration<double>>())) {

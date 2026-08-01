@@ -52,6 +52,9 @@ double bottle_radius = config["bottle_radius"] ? config["bottle_radius"].as<doub
 double grip_offset = config["grip_offset"] ? config["grip_offset"].as<double>() : 0.012;
 double suction_tip_compliance = config["suction_tip_compliance"] ? config["suction_tip_compliance"].as<double>() : 0.0037;
 double seat_cup_stretch = config["seat_cup_stretch"] ? config["seat_cup_stretch"].as<double>() : 0.0011;
+// Named SRDF poses: YAML defaults here, `pose_set` / per-pose ROS params applied in main()
+// once the node exists. See scenario_poses.h for the edi-vs-isaac cell split.
+edi_bottle_picking::ScenarioPoses scenario_poses = edi_bottle_picking::load_scenario_poses(config);
 
 int main(int argc, char ** argv)
 {
@@ -164,13 +167,18 @@ int main(int argc, char ** argv)
   std::array<double, 3> ga_bottle_offset = {0.0, 0.0, 0.078};
   for (size_t i = 0; i < 3 && i < grasp_aware_bottle_offset.size(); ++i) ga_bottle_offset[i] = grasp_aware_bottle_offset[i];
 
+  // Named poses: apply the `pose_set` preset + any per-pose overrides on top of the YAML
+  // values, and log the resolved set (same declare-if-absent pattern as `insertion_mode`).
+  edi_bottle_picking::apply_pose_overrides(application.node_, scenario_poses, "conveyor_feeding");
+
   ConveyorFeedingUtils conveyor_feeding_utils(manipulator, grasp_pose_topic, default_controller, debug, is_isaac, max_pick_attempts,
                                               insertion_mode, socket_pose_topic, insert_offset, moveit_insert_above_dz, insert_orientation,
                                               moveit_insert_descent_collision_check,
                                               moveit_insert_fallback_max_waypoints, moveit_insert_validate_descent,
                                               grasp_aware_insertion, in_hand_pose_topic, ga_bottle_offset,
                                               pick_depth_flush, pick_depth_compliance, moveit_insert_radius_aware,
-                                              bottle_radius, grip_offset, suction_tip_compliance, seat_cup_stretch);
+                                              bottle_radius, grip_offset, suction_tip_compliance, seat_cup_stretch,
+                                              scenario_poses);
 
   rclcpp::Duration d = rclcpp::Duration::from_seconds(1.0);
   if(!application.gripper_action_client_ptr->wait_for_action_server(d.to_chrono<std::chrono::duration<double>>())) {

@@ -9,3 +9,9 @@ received.xlsx
 sent.xlsx
 joint_states.xlsx
 combined.xlsx
+
+# colcon artifacts, if a build is ever run from THIS directory instead of the workspace
+# root. Always build from WS_EDI/ (see CLAUDE.md) -- a package-dir colcon run litters the repo.
+/build/
+/install/
+/log/

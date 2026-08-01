@@ -8,8 +8,10 @@ namespace constant_pose_utils
 
 const rclcpp::Logger LOGGER = rclcpp::get_logger("constant_pose_utils");
 
-ConstantPoseUtils::ConstantPoseUtils(manipulator_interface::ManipulatorInterface& manipulator, bool pose_from_topic, std::string pose_topic_name, bool debug, bool is_isaac)
-    : manipulator_(manipulator), debug_(debug), use_pose_from_topic_(pose_from_topic), simulation_(is_isaac)
+ConstantPoseUtils::ConstantPoseUtils(manipulator_interface::ManipulatorInterface& manipulator, bool pose_from_topic, std::string pose_topic_name,
+    std::string default_controller, bool debug, bool is_isaac, edi_bottle_picking::ScenarioPoses poses)
+    : manipulator_(manipulator), debug_(debug), use_pose_from_topic_(pose_from_topic), simulation_(is_isaac),
+      default_controller_(default_controller), poses_(poses)
 {
 	if (use_pose_from_topic_) {
 		sub_grasp_pose_ = manipulator.node_->create_subscription<geometry_msgs::msg::PoseStamped>(
@@ -27,7 +29,7 @@ ConstantPoseUtils::ConstantPoseUtils(manipulator_interface::ManipulatorInterface
 		curr_grasp_pose_.orientation.w = 0.014547;
 	}
 	control_switcher_ = std::make_unique<edi_bottle_picking::ControlModeSwitcher>(
-		manipulator.node_, is_isaac, "joint_trajectory_controller");
+		manipulator.node_, is_isaac, default_controller_);
 	isaac_vacuum_client_ = manipulator.node_->create_client<std_srvs::srv::SetBool>("/vacuum_gripper/command");
 	// Propagate this driver's debug flag (config/constant_pose_config.yaml, default true) into
 	// the shared step-gate, so the cartesian_goal prompts keep stepping for operators who run
@@ -139,7 +141,7 @@ bool ConstantPoseUtils::pickup()
     if(debug_){
         manipulator_.world_marker_->prompt("press 'Next' to go to position above pickup place");
     }
-    success_ = manipulator_.predefined_pose("wait_slam");
+    success_ = manipulator_.predefined_pose(poses_.initial);
     if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
@@ -177,14 +179,10 @@ bool ConstantPoseUtils::pickup()
 		return 0;
 	}
 
-	success_ = manipulator_.cartesian_goal(pick_poses[1], 15);
-	if(!success_){
-		RCLCPP_ERROR(LOGGER, "Pick action failed!");
-		return 0;
-	}
-
-	manipulator_.attach_collision_object(coll_obj);
-
+	// Grip BEFORE the descent so the pump's spin-up overlaps the approach and the cup is
+	// already under suction at contact -- see the matching comment in conveyor_feeding_utils.
+	// (Upstream only reordered conveyor_feeding + grasping_test; kept consistent here so all
+	// three scenarios share one pick sequence.)
 	success_ = command_vacuum(true);
 	if (!success_) {
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
@@ -192,6 +190,14 @@ bool ConstantPoseUtils::pickup()
 	} else {
 		RCLCPP_INFO(LOGGER, "Suction enabled!");
 	}
+
+	success_ = manipulator_.cartesian_goal(pick_poses[1], 15);
+	if(!success_){
+		RCLCPP_ERROR(LOGGER, "Pick action failed!");
+		return 0;
+	}
+
+	manipulator_.attach_collision_object(coll_obj);
 
 	success_ = manipulator_.cartesian_goal(pick_poses[0], 15);
 	if(!success_){
@@ -202,7 +208,7 @@ bool ConstantPoseUtils::pickup()
 	if(debug_){
 		manipulator_.world_marker_->prompt("press 'Next' to move above socket");
 	}
-	success_ = manipulator_.predefined_pose("ai_start2");
+	success_ = manipulator_.predefined_pose(poses_.dp_handoff);
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
@@ -225,7 +231,7 @@ bool ConstantPoseUtils::pickup()
 	if(debug_){
         manipulator_.world_marker_->prompt("press 'Next' to go to position above pickup place");
     }
-    success_ = manipulator_.predefined_pose("wait_slam");
+    success_ = manipulator_.predefined_pose(poses_.initial);
     if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;

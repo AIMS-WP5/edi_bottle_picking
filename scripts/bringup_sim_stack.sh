@@ -4,6 +4,12 @@
 # one window per ROS node. Each window streams its node's output LIVE and also tees it to a
 # per-node log file under $LOGDIR (so it's both on screen and inspectable later).
 #
+# DEPRECATED WORLD. edi_isaacsim is being retired in favour of robo-codegen-edi (see
+# bringup_og_stack.sh). This script keeps working only because it passes pose_set:=isaac to
+# conveyor_feeding: the scenario's DEFAULT named poses are now the real EDI cell's
+# (above_box_2 / near_box), which sit on the OPPOSITE SIDE of the robot from this scene's box.
+# Drop that flag and the arm sweeps away from the box and picks nothing.
+#
 # Start the Isaac scene first:  python simplified_ur5_scene.py --omnigraph  (press Play),
 # THEN run this script. (It does not touch Isaac -- you start/stop that yourself.)
 #
@@ -299,7 +305,7 @@ if (( RUN_PICK )); then
     # before run_dp_segment() reads it. (The old /object_point wait was a stale check -- that
     # topic was renamed to /socket_center -- so it always burned its full 60 s timeout.)
     echo "== phase 3: pick (conveyor_feeding, insertion_mode=$INSERTION_MODE) =="
-    newwin pick "ros2 launch edi_bottle_picking conveyor_feeding.launch.py use_sim_time:=true debug:=$DEBUG iterations:=$BOTTLE_PICKING_ITERATIONS insertion_mode:=$INSERTION_MODE planning_pipeline:=$PLANNING_PIPELINE retime_plans:=$RETIME_PLANS grasp_aware_insertion:=$GRASP_AWARE pick_depth_flush:=$PICK_DEPTH_FLUSH moveit_insert_radius_aware:=$RADIUS_AWARE_INSERT"
+    newwin pick "ros2 launch edi_bottle_picking conveyor_feeding.launch.py pose_set:=isaac use_sim_time:=true debug:=$DEBUG iterations:=$BOTTLE_PICKING_ITERATIONS insertion_mode:=$INSERTION_MODE planning_pipeline:=$PLANNING_PIPELINE retime_plans:=$RETIME_PLANS grasp_aware_insertion:=$GRASP_AWARE pick_depth_flush:=$PICK_DEPTH_FLUSH moveit_insert_radius_aware:=$RADIUS_AWARE_INSERT"
     # (No 'autocont' window any more. manipulator_interface::cartesian_goal() used to issue an
     # UNCONDITIONAL world_marker_->prompt() before executing the cartesian plan, which no-debug
     # runs could only escape by publishing buttons[2] ('Continue') on /rviz_visual_tools_gui at

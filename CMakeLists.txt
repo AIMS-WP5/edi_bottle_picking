@@ -41,7 +41,8 @@ ament_target_dependencies(
 
 add_executable(grasping_test src/grasping_test.cpp
 				   src/grasping_test_utils.cpp
-				   src/control_mode_switcher.cpp)
+				   src/control_mode_switcher.cpp
+				   src/scenario_poses.cpp)
 
 target_include_directories(grasping_test PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -65,7 +66,8 @@ ament_target_dependencies(
 
 add_executable(constant_pose src/constant_pose.cpp
 				   src/constant_pose_utils.cpp
-				   src/control_mode_switcher.cpp)
+				   src/control_mode_switcher.cpp
+				   src/scenario_poses.cpp)
 
 target_include_directories(constant_pose PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -88,7 +90,8 @@ ament_target_dependencies(
 
 add_executable(conveyor_feeding src/conveyor_feeding.cpp
 				   src/conveyor_feeding_utils.cpp
-				   src/control_mode_switcher.cpp)
+				   src/control_mode_switcher.cpp
+				   src/scenario_poses.cpp)
 
 target_include_directories(conveyor_feeding PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -137,6 +140,16 @@ install(
   DESTINATION share/${PROJECT_NAME})
 
 if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  # Pins the named-pose resolution order (defaults -> YAML -> pose_set preset -> per-pose
+  # params). The edi/isaac sets are different physical cells, so a silent mix-up is costly.
+  ament_add_gtest(test_scenario_poses test/test_scenario_poses.cpp src/scenario_poses.cpp)
+  target_include_directories(test_scenario_poses PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>)
+  ament_target_dependencies(test_scenario_poses rclcpp)
+  target_link_libraries(test_scenario_poses ${YAML_CPP_LIBRARIES})
+
   find_package(ament_lint_auto REQUIRED)
   # the following line skips the linter which checks for copyrights
   # comment the line when a copyright and license is added to all source files
