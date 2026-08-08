@@ -33,10 +33,10 @@ namespace conveyor_feeding_utils
                          int moveit_insert_fallback_max_waypoints = 85, bool moveit_insert_validate_descent = true,
                          bool grasp_aware_insertion = false, std::string in_hand_pose_topic = "grasp_in_hand",
                          std::array<double, 3> grasp_aware_bottle_offset = {0.0, 0.0, 0.078},
-                         bool pick_depth_flush = false, double pick_depth_compliance = 0.0037,
+                         bool pick_depth_flush = false, double pick_depth_compliance = 0.0,
                          bool moveit_insert_radius_aware = false,
                          double bottle_radius = 0.0176, double grip_offset = 0.012,
-                         double suction_tip_compliance = 0.0037, double seat_cup_stretch = 0.0011,
+                         double suction_tip_compliance = 0.0, double seat_cup_stretch = 0.0011,
                          edi_bottle_picking::ScenarioPoses poses = {}); // Constructor
 
     ~ConveyorFeedingUtils(); // Destructor
@@ -134,7 +134,8 @@ namespace conveyor_feeding_utils
             modes share one radius-aware code path. Rotation = inverse(calibrated insert orientation)
             so the derived orientation reproduces the calibrated one at spin 0; origin places the EE
             origin at (radial_overhang, 0, grip_offset) in the bottle frame, radial_overhang =
-            bottle_radius - suction_tip_compliance + seat_cup_stretch. Roll about the bottle long
+            bottle_radius - suction_tip_compliance + seat_cup_stretch (= r + stretch since
+            tool-tip-305: compliance is 0, the rigid tip IS virtual_ee_link). Roll about the bottle long
             axis is arbitrary (irrelevant) -- the free world-Z spin search selects the orientation.
             At the baseline bottle this reproduces moveit_insert_offset_xyz exactly (regression anchor). */
         tf2::Transform compute_canonical_in_hand_transform();
@@ -204,7 +205,7 @@ namespace conveyor_feeding_utils
         bool moveit_insert_radius_aware_;  // route fixed-mode insert through the canonical radius-aware transform
         double bottle_radius_;             // cup-contact radius of the gripped bottle (m)
         double grip_offset_;               // cup contact offset ALONG the bottle long axis (axial, m)
-        double suction_tip_compliance_;    // virtual_ee_link (0.305) is this far past the rigid cup tip (0.3013)
+        double suction_tip_compliance_;    // 0.0 since tool-tip-305: the rigid cup tip IS at virtual_ee_link (0.305)
         double seat_cup_stretch_;          // cup stretch at bond (mirrors Isaac SEAT_CUP_STRETCH)
         // Latest in-hand pose (bottle in wrist_3_link frame). frame_id gates validity: Isaac
         // publishes "wrist_3_link" while a bottle is bonded and "none" otherwise.

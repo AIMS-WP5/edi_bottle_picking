@@ -342,12 +342,11 @@ bool ConveyorFeedingUtils::try_pick_bottle()
 	manipulator_.world_marker_->publishAxisLabeled(pick_pose, "Corrected_object_pose");
 	manipulator_.world_marker_->trigger();
 
-	// Pick-depth flush (default off): when best_grasp is published at the bottle SURFACE (Isaac
-	// --best-grasp-at-surface), the raw target puts virtual_ee_link at the surface, which leaves
-	// the rigid cup tip suction_tip_compliance ABOVE it (the planning frame 0.305 sits that far
-	// past the measured 0.3013 rigid tip). Press the target that much DEEPER (world -Z, top-down
-	// grasp) so the rigid tip meets the surface flush. Off => target unchanged (legacy). Applied
-	// before the collision object + descent waypoints so both use the pressed pose.
+	// Pick-depth flush — OBSOLETE since tool-tip-305 (2026-08-08): the rigid cup tip now
+	// equals virtual_ee_link (0.305, real-robot measured), so a surface target is already
+	// flush at contact and enabling this presses the tip INTO the bottle. Keep OFF; knob
+	// retained inert pending the real-cell structural pass (the codegen-ros-support fork
+	// has already deleted it).
 	if (pick_depth_flush_) {
 		pick_pose.position.z -= pick_depth_compliance_;
 		RCLCPP_INFO(LOGGER, "pick-depth flush: pressed grasp target %.4f m deeper (z=%.4f) so the "
@@ -1132,12 +1131,12 @@ tf2::Transform ConveyorFeedingUtils::compute_canonical_in_hand_transform()
 	//    is selected and the derived EE orientation == q_cal.
 	//  - origin places the EE origin at v = (radial_overhang, 0, grip_offset) in the BOTTLE frame:
 	//      radial_overhang = bottle_radius - suction_tip_compliance + seat_cup_stretch
-	//        (the horizontal cup->bottle-axis overhang: one radius, minus the planning frame's
-	//         3.7 mm reach past the rigid tip, plus the 1.1 mm bond stretch),
+	//        (= r + stretch since tool-tip-305: the rigid tip is AT virtual_ee_link (0.305,
+	//         real-robot measured), so the old 3.7 mm "reach past the tip" term is zero),
 	//      grip_offset      = axial cup contact offset along the bottle long axis.
 	//    Roll about the long axis is arbitrary (irrelevant) -- taken as 0 here; the free world-Z
-	//    spin search absorbs it. At the baseline bottle (r=0.0176) v=(0.015,0,0.012), reproducing
-	//    socket + moveit_insert_offset_xyz [0.015,0,0.09] (= v + grasp_aware_bottle_offset_[0,0,0.078]).
+	//    spin search absorbs it. At the baseline bottle (r=0.0176) v=(0.0187,0,0.012), reproducing
+	//    socket + moveit_insert_offset_xyz [0.0187,0,0.09] (= v + grasp_aware_bottle_offset_[0,0,0.078]).
 	tf2::Quaternion q_cal(moveit_insert_orientation_[0], moveit_insert_orientation_[1],
 	                      moveit_insert_orientation_[2], moveit_insert_orientation_[3]);
 	tf2::Quaternion q_eb = q_cal.inverse();

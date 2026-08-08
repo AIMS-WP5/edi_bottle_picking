@@ -97,11 +97,11 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "pick_depth_flush",
             default_value="false",
-            description="false (default) = pick grasp target unchanged. true = press the grasp "
-                        "target 'pick_depth_compliance' m deeper so the rigid cup tip meets the "
-                        "bottle surface flush -- intended together with Isaac's "
-                        "--best-grasp-at-surface (best_grasp published at the surface). Overrides "
-                        "the YAML value.",
+            description="OBSOLETE since tool-tip-305 (2026-08-08): the modelled rigid cup tip "
+                        "now equals virtual_ee_link (0.305, real-robot measured), so a surface "
+                        "target is already flush at contact and enabling this presses the tip "
+                        "pick_depth_compliance m INTO the bottle. Keep false. Knob retained "
+                        "inert pending the real-cell structural pass. Overrides the YAML value.",
         ),
         DeclareLaunchArgument(
             "moveit_insert_radius_aware",

@@ -12,9 +12,14 @@ default_controller: "joint_trajectory_controller" # scaled_joint_trajectory_cont
 insertion_mode: "dp"
 socket_pose_topic: "socket_center"   # PoseStamped (world frame) carrying the insertion target
 # MoveIt-mode only: EE target = socket_center + this offset (world XYZ, metres), reusing the
-# current (held-bottle) wrist orientation. Calibrate once with Isaac PAD_ADJ_X/Y = 0 so it is
+# current (held-bottle) wrist orientation. Calibrate once with PAD_ADJ_X/Y = 0 so it is
 # pure bottle/gripper geometry (independent of any DP model version). See docs / plan.
-moveit_insert_offset_xyz: [0.015, 0.0, 0.09]
+# tool-tip-305 (2026-08-08): x 0.015 -> 0.0187 = the analytic radial_overhang under the
+# corrected tip (r 0.0176 + seat_cup_stretch 0.0011; the old 0.015 was the same derivation
+# with the now-removed 3.7 mm "compliance" term, calibrated on the retired edi_isaacsim
+# scene). Keeps the derived-equals-fixed regression anchor true; recalibrate on the real
+# cell from this analytic starting point.
+moveit_insert_offset_xyz: [0.0187, 0.0, 0.09]
 moveit_insert_above_dz: 0.10          # height above the insert pose for the MoveIt approach (m)
 # Fixed end-effector (virtual_ee_link) orientation for the insertion, world frame, [x,y,z,w].
 # Chosen so the gripper is HORIZONTAL (approach axis = world -X) and the held bottle hangs
@@ -61,26 +66,29 @@ grasp_aware_bottle_offset_xyz: [0.0, 0.0, 0.078]
 # NOT a parameter here -- orientation is handled by the insert's free world-Z spin search.
 bottle_radius: 0.0176            # cup-contact radius of the gripped bottle (m)
 grip_offset: 0.012               # cup contact offset ALONG the bottle long axis (axial, m; mirrors Isaac GRIP_OFFSET)
-# The planning frame virtual_ee_link (URDF: tool0 + 0.305) sits this far PAST the measured
-# rigid suction-cup tip (tool0 + suction_tip_length 0.3013). Modelled as cup compression, NOT
-# a frame error (the 0.305 is a deliberate EDI hardware value; left untouched).
-suction_tip_length: 0.3013       # tool0 -> rigid cup tip (measured); informational
-suction_tip_compliance: 0.0037   # virtual_ee_offset (0.305) - suction_tip_length (0.3013)
-seat_cup_stretch: 0.0011         # cup stretch at bond (mirrors Isaac SEAT_CUP_STRETCH)
+# tool-tip-305 (2026-08-08): the real robot measures tool0 -> rigid cup tip = 0.305 m —
+# exactly the planning frame virtual_ee_link. The old 0.3013 was the (3.7 mm too short)
+# CAD-mesh tip and the delta was misbooked as "cup compression"; the edi_ur meshes and
+# every sim model now end at 0.305, so targeting virtual_ee at a surface pose lands the
+# rigid tip flush at contact with NO press. See robo-codegen-edi status/tool-tip-305/.
+suction_tip_length: 0.305        # tool0 -> rigid cup tip (real-robot measured); informational
+suction_tip_compliance: 0.0      # virtual_ee_offset (0.305) - suction_tip_length (0.305)
+seat_cup_stretch: 0.0011         # cup stretch at bond
 
-# Pick-depth flush (default off): when best_grasp is published at the bottle SURFACE (Isaac
-# --best-grasp-at-surface), press the tool pick_depth_compliance metres deeper so the rigid
-# cup tip meets the surface flush (virtual_ee_link is compliance past the rigid tip). Off =>
-# pick target unchanged. Overridable via conveyor_feeding.launch.py 'pick_depth_flush'.
+# Pick-depth flush — OBSOLETE since tool-tip-305: there is no compliance gap to press
+# through, so enabling this presses the rigid tip pick_depth_compliance metres INTO the
+# bottle wall. Keep false. (Knob retained inert pending the real-cell structural pass;
+# the codegen-ros-support fork has already deleted it.)
 pick_depth_flush: false
-pick_depth_compliance: 0.0037    # default = suction_tip_compliance
+pick_depth_compliance: 0.0       # dead while pick_depth_flush is false
 
 # Radius-aware fixed-mode insertion (default off). When true, the NON-grasp-aware insert EE
 # pose is derived through the SAME T_we = T_wb * inverse(T_ee_bottle) math as grasp-aware, but
 # with a CANONICAL in-hand transform built analytically from the geometry above (radial
-# overhang = bottle_radius - suction_tip_compliance + seat_cup_stretch; axial = grip_offset).
-# At the baseline 0.0176 bottle this reproduces moveit_insert_offset_xyz exactly (regression
-# anchor, logged); for other radii the overhang tracks the radius. Off => the literal
+# overhang = bottle_radius - suction_tip_compliance + seat_cup_stretch = r + stretch since
+# tool-tip-305). At the baseline 0.0176 bottle this reproduces moveit_insert_offset_xyz
+# (0.0187) exactly (regression anchor, logged); for other radii the overhang tracks the
+# radius. Off => the literal
 # moveit_insert_offset_xyz fixed pose (byte-identical legacy). moveit_insert_offset_xyz remains
 # the final fallback when no derivation applies. Overridable via the launch 'moveit_insert_radius_aware' arg.
 moveit_insert_radius_aware: false

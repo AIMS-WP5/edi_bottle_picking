@@ -4,6 +4,15 @@ Session docs: `bottle-asset-and-grasp-aware-insertion/` (plan + iterations 01–
 Prior cuMotion integration: `cumotion-initial-integration/` (complete, 2026-07-14).
 Branch `feature/cumotion-integration`, all repos, pushed.
 
+> **tool-tip-305 update (2026-08-08):** the geometry story below is superseded. The real
+> robot measures tool0 → rigid tip = **0.305 m** (= `virtual_ee_link`); the 0.3013 was the
+> 3.7 mm-short CAD mesh, and the "suction-tip compliance" was a misbooking of that mesh
+> error. This repo's constants now carry `suction_tip_length 0.305`,
+> `suction_tip_compliance 0.0`, `moveit_insert_offset_xyz[0] 0.0187` (= r + stretch), and
+> the edi_isaacsim world (with its 0.3013 tip and 0.320 seat calibration) is **fully
+> retired — historical reference only**. Full record:
+> `robo-codegen-edi/status/tool-tip-305/`.
+
 ## Done this session
 
 1. **Improved bottle asset re-adopted** (`edi_isaacsim d79f401`): robo-codegen

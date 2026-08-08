@@ -4,11 +4,18 @@
 # one window per ROS node. Each window streams its node's output LIVE and also tees it to a
 # per-node log file under $LOGDIR (so it's both on screen and inspectable later).
 #
-# DEPRECATED WORLD. edi_isaacsim is being retired in favour of robo-codegen-edi (see
-# bringup_og_stack.sh). This script keeps working only because it passes pose_set:=isaac to
-# conveyor_feeding: the scenario's DEFAULT named poses are now the real EDI cell's
-# (above_box_2 / near_box), which sit on the OPPOSITE SIDE of the robot from this scene's box.
-# Drop that flag and the arm sweeps away from the box and picks nothing.
+# ============================ RETIRED — HISTORICAL ONLY =============================
+# The edi_isaacsim world this script drives is FULLY RETIRED (tool-tip-305, 2026-08-08):
+# it will never again be used, not even for baseline comparisons; it remains on record
+# only as a historical code reference. This script is NO LONGER MAINTAINED and is not
+# expected to run: the repo's geometry constants have moved to the corrected 0.305
+# tool tip (robo-codegen-edi status/tool-tip-305/), while the edi_isaacsim scene keeps
+# the old 0.3013-tip gripper and 0.320 seat calibration. For the current sim stack see
+# codegen-ros-support's bringup_og_stack.sh (robo-codegen-edi world).
+# ====================================================================================
+# (Historical note: this script kept working only because it passes pose_set:=isaac to
+# conveyor_feeding — the scenario's DEFAULT named poses are the real EDI cell's
+# (above_box_2 / near_box), on the OPPOSITE SIDE of the robot from this scene's box.)
 #
 # Start the Isaac scene first:  python simplified_ur5_scene.py --omnigraph  (press Play),
 # THEN run this script. (It does not touch Isaac -- you start/stop that yourself.)
@@ -18,8 +25,7 @@
 #                        [--max-velocity RAD_S] [--gripper TYPE] [--no-pick] [--no-attach]
 #                        [--best-grasp] [--debug|--no-debug] [--bottle-picking-iterations N]
 #                        [--insertion-mode dp|moveit] [--planner ompl|cumotion]
-#                        [--grasp-aware true|false] [--pick-depth-flush true|false]
-#                        [--radius-aware-insert true|false]
+#                        [--grasp-aware true|false] [--radius-aware-insert true|false]
 #   bringup_sim_stack.sh down            # Ctrl-C every node and kill the tmux session
 #
 # Examples:
@@ -49,10 +55,8 @@
 # snap). With the default seat-snap the derived pose reproduces the fixed one (delta logged
 # per insertion). Default false = byte-identical legacy behaviour.
 #
-# --pick-depth-flush true: press the pick grasp target one suction-tip-compliance deeper so the
-# rigid cup tip meets the bottle surface flush. Intended together with Isaac's
-# --best-grasp-at-surface (best_grasp published at the bottle surface instead of its centroid).
-# Default false = pick target unchanged.
+# (--pick-depth-flush was removed with tool-tip-305: the modelled rigid tip now equals
+# virtual_ee_link, so the press it applied would dig the tip into the bottle.)
 #
 # --radius-aware-insert true (moveit insertion mode only; ignored when --grasp-aware true):
 # derive the fixed-mode insert pose through the canonical radius-aware transform so it tracks
@@ -113,8 +117,7 @@ TIME_DILATION="0.5"
 # Grasp-aware insertion (moveit insertion mode only): derive the insert EE pose from the
 # measured bottle-in-hand transform instead of the fixed calibrated pose. See --grasp-aware.
 GRASP_AWARE="false"
-# Pick-depth flush + radius-aware insert (see the header notes). Default off = legacy behaviour.
-PICK_DEPTH_FLUSH="false"
+# Radius-aware insert (see the header notes). Default off = legacy behaviour.
 RADIUS_AWARE_INSERT="false"
 RUN_PICK=1
 ATTACH=1
@@ -158,7 +161,6 @@ while [[ $# -gt 0 ]]; do
         --retime-plans)     RETIME_PLANS="$2"; shift 2;;
         --time-dilation)    TIME_DILATION="$2"; shift 2;;
         --grasp-aware)      GRASP_AWARE="$2"; shift 2;;
-        --pick-depth-flush) PICK_DEPTH_FLUSH="$2"; shift 2;;
         --radius-aware-insert) RADIUS_AWARE_INSERT="$2"; shift 2;;
         -h|--help)          awk 'NR>1 && /^#/{sub(/^# ?/,""); print; next} NR>1{exit}' "$0"; exit 0;;
         *) echo "unknown arg: $1 (try --help)" >&2; exit 1;;
@@ -181,10 +183,6 @@ esac
 if [[ "$GRASP_AWARE" == "true" && "$INSERTION_MODE" != "moveit" ]]; then
     echo "WARNING: --grasp-aware true only affects --insertion-mode moveit (current: $INSERTION_MODE)" >&2
 fi
-case "$PICK_DEPTH_FLUSH" in
-    true|false) ;;
-    *) echo "invalid --pick-depth-flush '$PICK_DEPTH_FLUSH' (expected: true | false)" >&2; exit 1;;
-esac
 case "$RADIUS_AWARE_INSERT" in
     true|false) ;;
     *) echo "invalid --radius-aware-insert '$RADIUS_AWARE_INSERT' (expected: true | false)" >&2; exit 1;;
@@ -305,7 +303,7 @@ if (( RUN_PICK )); then
     # before run_dp_segment() reads it. (The old /object_point wait was a stale check -- that
     # topic was renamed to /socket_center -- so it always burned its full 60 s timeout.)
     echo "== phase 3: pick (conveyor_feeding, insertion_mode=$INSERTION_MODE) =="
-    newwin pick "ros2 launch edi_bottle_picking conveyor_feeding.launch.py pose_set:=isaac use_sim_time:=true debug:=$DEBUG iterations:=$BOTTLE_PICKING_ITERATIONS insertion_mode:=$INSERTION_MODE planning_pipeline:=$PLANNING_PIPELINE retime_plans:=$RETIME_PLANS grasp_aware_insertion:=$GRASP_AWARE pick_depth_flush:=$PICK_DEPTH_FLUSH moveit_insert_radius_aware:=$RADIUS_AWARE_INSERT"
+    newwin pick "ros2 launch edi_bottle_picking conveyor_feeding.launch.py pose_set:=isaac use_sim_time:=true debug:=$DEBUG iterations:=$BOTTLE_PICKING_ITERATIONS insertion_mode:=$INSERTION_MODE planning_pipeline:=$PLANNING_PIPELINE retime_plans:=$RETIME_PLANS grasp_aware_insertion:=$GRASP_AWARE moveit_insert_radius_aware:=$RADIUS_AWARE_INSERT"
     # (No 'autocont' window any more. manipulator_interface::cartesian_goal() used to issue an
     # UNCONDITIONAL world_marker_->prompt() before executing the cartesian plan, which no-debug
     # runs could only escape by publishing buttons[2] ('Continue') on /rviz_visual_tools_gui at
@@ -316,7 +314,7 @@ fi
 echo
 if [[ "$BOTTLE_PICKING_ITERATIONS" == "-1" ]]; then ITERS_DISP="config default"; else ITERS_DISP="$BOTTLE_PICKING_ITERATIONS"; fi
 echo "tmux session '$SESSION' is up."
-echo "  insertion_mode=$INSERTION_MODE  planner=$PLANNER  grasp_aware=$GRASP_AWARE  pick_depth_flush=$PICK_DEPTH_FLUSH  radius_aware_insert=$RADIUS_AWARE_INSERT  model=$MODEL_NAME  steps=$STEP_COUNT  collision_check=$COLLISION_CHECK  max_velocity=$MAX_VELOCITY  gripper=$GRIPPER_TYPE  debug=$DEBUG  bottle_picking_iterations=$ITERS_DISP"
+echo "  insertion_mode=$INSERTION_MODE  planner=$PLANNER  grasp_aware=$GRASP_AWARE  radius_aware_insert=$RADIUS_AWARE_INSERT  model=$MODEL_NAME  steps=$STEP_COUNT  collision_check=$COLLISION_CHECK  max_velocity=$MAX_VELOCITY  gripper=$GRIPPER_TYPE  debug=$DEBUG  bottle_picking_iterations=$ITERS_DISP"
 echo "  windows: control moveit velbridge vacbridge$( [[ $INSERTION_MODE == moveit ]] && echo ' padframe' || echo ' dp')$( [[ $PLANNER == cumotion ]] && echo ' cumotion')$( ((RUN_BESTGRASP)) && echo ' bestgrasp')$( ((RUN_PICK)) && echo ' pick')"
 if [[ "$INSERTION_MODE" == "moveit" ]]; then
     echo "  NOTE: MoveIt comparison mode -- DP node not launched. For a clean comparison start Isaac with:"

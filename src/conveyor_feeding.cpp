@@ -46,11 +46,13 @@ std::vector<double> grasp_aware_bottle_offset = config["grasp_aware_bottle_offse
 // Physical bottle / suction-tip geometry (radius-aware pick + insert). Defaults match the
 // baseline bottle_v3 asset; a different-radius bottle only needs bottle_radius changed.
 bool pick_depth_flush = config["pick_depth_flush"] ? config["pick_depth_flush"].as<bool>() : false;
-double pick_depth_compliance = config["pick_depth_compliance"] ? config["pick_depth_compliance"].as<double>() : 0.0037;
+double pick_depth_compliance = config["pick_depth_compliance"] ? config["pick_depth_compliance"].as<double>() : 0.0;
 bool moveit_insert_radius_aware = config["moveit_insert_radius_aware"] ? config["moveit_insert_radius_aware"].as<bool>() : false;
 double bottle_radius = config["bottle_radius"] ? config["bottle_radius"].as<double>() : 0.0176;
 double grip_offset = config["grip_offset"] ? config["grip_offset"].as<double>() : 0.012;
-double suction_tip_compliance = config["suction_tip_compliance"] ? config["suction_tip_compliance"].as<double>() : 0.0037;
+// tool-tip-305 (2026-08-08): compliance default 0.0037 -> 0.0 — the modelled rigid tip
+// now equals virtual_ee_link (0.305, real-robot measured); the old delta was a mesh error.
+double suction_tip_compliance = config["suction_tip_compliance"] ? config["suction_tip_compliance"].as<double>() : 0.0;
 double seat_cup_stretch = config["seat_cup_stretch"] ? config["seat_cup_stretch"].as<double>() : 0.0011;
 // Named SRDF poses: YAML defaults here, `pose_set` / per-pose ROS params applied in main()
 // once the node exists. See scenario_poses.h for the edi-vs-isaac cell split.
