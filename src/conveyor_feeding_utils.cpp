@@ -52,7 +52,7 @@ struct PipelineScope {
 	~PipelineScope() { m.set_planning_pipeline(prev); }
 };
 
-ConveyorFeedingUtils::ConveyorFeedingUtils(manipulator_interface::ManipulatorInterface& manipulator, std::string grasp_pose_topic, std::string default_controller, bool debug, bool is_isaac, int max_pick_attempts,
+ConveyorFeedingUtils::ConveyorFeedingUtils(manipulator_interface::ManipulatorInterface& manipulator, std::string grasp_pose_topic, std::string default_controller, bool debug, edi_bottle_picking::BackendFlags backend, int max_pick_attempts,
     std::string insertion_mode, std::string socket_pose_topic, std::array<double, 3> moveit_insert_offset, double moveit_insert_above_dz,
     std::array<double, 4> moveit_insert_orientation, bool moveit_insert_descent_collision_check,
     int moveit_insert_fallback_max_waypoints, bool moveit_insert_validate_descent,
@@ -60,7 +60,7 @@ ConveyorFeedingUtils::ConveyorFeedingUtils(manipulator_interface::ManipulatorInt
     bool pick_depth_flush, double pick_depth_compliance, bool moveit_insert_radius_aware,
     double bottle_radius, double grip_offset, double suction_tip_compliance, double seat_cup_stretch,
     edi_bottle_picking::ScenarioPoses poses)
-    : manipulator_(manipulator), simulation_(is_isaac), max_pick_attempts_(max_pick_attempts), default_controller_(default_controller), poses_(poses),
+    : manipulator_(manipulator), simulation_(backend.simulation), max_pick_attempts_(max_pick_attempts), default_controller_(default_controller), poses_(poses),
       insertion_mode_(insertion_mode), socket_pose_topic_(socket_pose_topic), moveit_insert_offset_(moveit_insert_offset), moveit_insert_above_dz_(moveit_insert_above_dz),
       moveit_insert_orientation_(moveit_insert_orientation), moveit_insert_descent_collision_check_(moveit_insert_descent_collision_check),
       moveit_insert_fallback_max_waypoints_(moveit_insert_fallback_max_waypoints), moveit_insert_validate_descent_(moveit_insert_validate_descent),
@@ -85,8 +85,9 @@ ConveyorFeedingUtils::ConveyorFeedingUtils(manipulator_interface::ManipulatorInt
 		in_hand_pose_topic_, 10, std::bind(&ConveyorFeedingUtils::in_hand_pose_callback, this, _1)
 	);
 	control_switcher_ = std::make_unique<edi_bottle_picking::ControlModeSwitcher>(
-		manipulator.node_, is_isaac, default_controller_);
-	isaac_vacuum_client_ = manipulator.node_->create_client<std_srvs::srv::SetBool>("/vacuum_gripper/command");
+		manipulator.node_, backend.simulation, default_controller_);
+	vacuum_ = std::make_unique<edi_bottle_picking::VacuumCommander>(
+		manipulator.node_, manipulator, backend);
 	ik_client_ = manipulator.node_->create_client<moveit_msgs::srv::GetPositionIK>("/compute_ik");
 
 	// Install the shared step-gate on the manipulator. Gating it there (rather than keeping a
@@ -103,36 +104,7 @@ ConveyorFeedingUtils::~ConveyorFeedingUtils()
 
 bool ConveyorFeedingUtils::command_vacuum(bool grip)
 {
-	bool ok;
-	if (simulation_) {
-		// Isaac/TopicBasedSystem has no UR /set_io service, so activate_vacuum_gripper()
-		// would block ~5 s on it and report the grasp failed (aborting the pick). In sim the
-		// suction is modelled entirely by the Isaac bridge, so skip the UR IO path.
-		ok = true;
-	} else {
-		ok = manipulator_.activate_vacuum_gripper(grip);
-	}
-	// Mirror the command to Isaac Sim's vacuum bridge (best-effort; warns + continues if absent).
-	set_isaac_vacuum(grip);
-	return ok;
-}
-
-void ConveyorFeedingUtils::set_isaac_vacuum(bool grip)
-{
-	if (!isaac_vacuum_client_->service_is_ready()) {
-		RCLCPP_WARN(LOGGER, "Isaac vacuum service '/vacuum_gripper/command' not available; "
-		                    "skipping sim %s command", grip ? "GRIP" : "RELEASE");
-		return;
-	}
-	auto request = std::make_shared<std_srvs::srv::SetBool::Request>();
-	request->data = grip;
-	isaac_vacuum_client_->async_send_request(
-		request,
-		[grip](rclcpp::Client<std_srvs::srv::SetBool>::SharedFuture future) {
-			auto response = future.get();
-			RCLCPP_INFO(LOGGER, "Isaac vacuum %s -> success=%d (%s)",
-			            grip ? "GRIP" : "RELEASE", response->success, response->message.c_str());
-		});
+	return vacuum_->command(grip);
 }
 
 bool ConveyorFeedingUtils::add_box() {

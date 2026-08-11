@@ -123,7 +123,16 @@ bool ControlModeSwitcher::switch_controllers(const std::string & activate,
     auto client = tmp_node->create_client<controller_manager_msgs::srv::SwitchController>(
         "/controller_manager/switch_controller");
 
+    // Bounded wait: if controller_manager is gone (crashed / brought down mid-run), fail the
+    // switch so the caller can take its recovery path instead of hanging the scenario forever.
+    const auto service_deadline = std::chrono::steady_clock::now() + 10s;
     while (!client->wait_for_service(2s)) {
+        if (std::chrono::steady_clock::now() >= service_deadline) {
+            RCLCPP_ERROR(LOGGER, "/controller_manager/switch_controller service not available "
+                                 "after 10s; controller switch +%s -%s failed",
+                         activate.c_str(), deactivate.c_str());
+            return false;
+        }
         RCLCPP_WARN(LOGGER, "Waiting for /controller_manager/switch_controller service...");
     }
 
@@ -138,8 +147,12 @@ bool ControlModeSwitcher::switch_controllers(const std::string & activate,
     request->timeout = timeout;
 
     auto future = client->async_send_request(request);
-    if (rclcpp::spin_until_future_complete(tmp_node, future) != rclcpp::FutureReturnCode::SUCCESS) {
-        RCLCPP_ERROR(LOGGER, "Failed to call /controller_manager/switch_controller");
+    // 7s client-side bound: above the 5s server-side switch timeout carried in the request,
+    // so a live-but-slow switch still completes, while a wedged controller_manager fails here.
+    if (rclcpp::spin_until_future_complete(tmp_node, future, 7s) !=
+        rclcpp::FutureReturnCode::SUCCESS) {
+        RCLCPP_ERROR(LOGGER, "/controller_manager/switch_controller call did not complete "
+                             "within 7s (+%s -%s)", activate.c_str(), deactivate.c_str());
         return false;
     }
     if (future.get()->ok) {

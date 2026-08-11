@@ -41,6 +41,7 @@ ament_target_dependencies(
 
 add_executable(grasping_test src/grasping_test.cpp
 				   src/grasping_test_utils.cpp
+				   src/vacuum_commander.cpp
 				   src/control_mode_switcher.cpp
 				   src/scenario_poses.cpp)
 
@@ -66,6 +67,7 @@ ament_target_dependencies(
 
 add_executable(constant_pose src/constant_pose.cpp
 				   src/constant_pose_utils.cpp
+				   src/vacuum_commander.cpp
 				   src/control_mode_switcher.cpp
 				   src/scenario_poses.cpp)
 
@@ -90,6 +92,7 @@ ament_target_dependencies(
 
 add_executable(conveyor_feeding src/conveyor_feeding.cpp
 				   src/conveyor_feeding_utils.cpp
+				   src/vacuum_commander.cpp
 				   src/control_mode_switcher.cpp
 				   src/scenario_poses.cpp)
 
@@ -149,6 +152,14 @@ if(BUILD_TESTING)
     $<INSTALL_INTERFACE:include>)
   ament_target_dependencies(test_scenario_poses rclcpp)
   target_link_libraries(test_scenario_poses ${YAML_CPP_LIBRARIES})
+
+  # Pins the backend-flag precedence (launch param -> yaml -> use_sim_time fallback for
+  # `simulation`; `mirror_to_isaac` follows resolved simulation unless explicit).
+  ament_add_gtest(test_backend_flags test/test_backend_flags.cpp src/vacuum_commander.cpp)
+  target_include_directories(test_backend_flags PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>)
+  ament_target_dependencies(test_backend_flags rclcpp manipulator_interface std_srvs)
 
   find_package(ament_lint_auto REQUIRED)
   # the following line skips the linter which checks for copyrights

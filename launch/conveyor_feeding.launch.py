@@ -8,6 +8,8 @@ from launch_ros.parameter_descriptions import ParameterValue
 def generate_launch_description():
     pose_set = LaunchConfiguration("pose_set")
     use_sim_time = LaunchConfiguration("use_sim_time")
+    simulation = LaunchConfiguration("simulation")
+    mirror_to_isaac = LaunchConfiguration("mirror_to_isaac")
     debug = LaunchConfiguration("debug")
     iterations = LaunchConfiguration("iterations")
     insertion_mode = LaunchConfiguration("insertion_mode")
@@ -112,6 +114,23 @@ def generate_launch_description():
                         "transform (tracks bottle_radius; reproduces the fixed pose at the baseline "
                         "bottle). Overrides the YAML value.",
         ),
+        DeclareLaunchArgument(
+            "simulation",
+            default_value="auto",
+            description="Backend flag: 'true' = Isaac Sim is the primary plant (skip the UR "
+                        "/set_io vacuum path, trust sim grasp status, flip Isaac drive gains on "
+                        "control switches); 'false' = real robot / URSim. 'auto' (default) falls "
+                        "back to the config-yaml value, then to the use_sim_time heuristic (with "
+                        "a WARN). Set explicitly for bag-replay/Gazebo/hybrid deployments.",
+        ),
+        DeclareLaunchArgument(
+            "mirror_to_isaac",
+            default_value="auto",
+            description="Mirror vacuum commands to Isaac's /vacuum_gripper/command bridge. "
+                        "'auto' (default) follows the resolved 'simulation' value: Isaac-primary "
+                        "mirrors automatically, ROS-only runs don't. Hybrid bring-ups (URSim/real "
+                        "primary + Isaac follower) pass 'true' explicitly.",
+        ),
         # Start the actual move_group node/action server
         Node(
             package="edi_bottle_picking",
@@ -129,6 +148,8 @@ def generate_launch_description():
                 "pick_depth_flush": ParameterValue(pick_depth_flush, value_type=bool),
                 "moveit_insert_radius_aware": ParameterValue(moveit_insert_radius_aware, value_type=bool),
                 "pose_set": ParameterValue(pose_set, value_type=str),
+                "simulation": ParameterValue(simulation, value_type=str),
+                "mirror_to_isaac": ParameterValue(mirror_to_isaac, value_type=str),
             }],
         ),
     ])

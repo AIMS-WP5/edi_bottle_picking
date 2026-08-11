@@ -46,20 +46,28 @@ int main(int argc, char ** argv)
   ManipulatorInterface manipulator(application.node_, application.move_group_ptr, application.gripper_action_client_ptr, 
                                    application.tf_buffer_ptr);
 
-  // Running against Isaac Sim is signalled by use_sim_time (set true by the launch
-  // when connected to the sim clock). In that mode grasping_test skips hardware-only
-  // steps (UR IO grasp check, real-controller switches).
-  bool simulation = application.node_->get_parameter("use_sim_time").as_bool();
+  // Backend flags: explicit `simulation` / `mirror_to_isaac` (launch arg > yaml > fallback:
+  // simulation from use_sim_time with a WARN, mirror follows simulation). See vacuum_commander.h.
+  // On simulation grasping_test skips hardware-only steps (UR IO grasp check).
+  edi_bottle_picking::BackendFlags backend = edi_bottle_picking::resolve_backend_flags(
+      application.node_,
+      config["simulation"] ? config["simulation"].as<std::string>() : "auto",
+      config["mirror_to_isaac"] ? config["mirror_to_isaac"].as<std::string>() : "auto",
+      LOGGER);
+  // Position controller to switch back to after the DP segment;
+  // scaled_joint_trajectory_controller on the real robot.
+  std::string default_controller = config["default_controller"]
+      ? config["default_controller"].as<std::string>() : "joint_trajectory_controller";
   // Whether to run the MoveIt->real-time (DP/PyTorch) controller switchover during pick.
   // Disable for model-less runs (e.g. plain pick/place in sim with no DP node).
   bool run_dp_switchover = application.node_->get_parameter_or("run_dp_switchover", true);
-  RCLCPP_INFO(LOGGER, "grasping_test: simulation=%s, run_dp_switchover=%s",
-              simulation ? "ON" : "OFF", run_dp_switchover ? "ON" : "OFF");
+  RCLCPP_INFO(LOGGER, "grasping_test: run_dp_switchover=%s, default_controller=%s",
+              run_dp_switchover ? "ON" : "OFF", default_controller.c_str());
 
   edi_bottle_picking::apply_pose_overrides(application.node_, scenario_poses, "grasping_test");
 
-  GraspingTestUtils grasping_test_utils(manipulator, grasp_pose_topic, debug, simulation, run_dp_switchover,
-                                        scenario_poses);
+  GraspingTestUtils grasping_test_utils(manipulator, grasp_pose_topic, default_controller, debug, backend,
+                                        run_dp_switchover, scenario_poses);
 
   rclcpp::Duration d = rclcpp::Duration::from_seconds(1.0);
   if(!application.gripper_action_client_ptr->wait_for_action_server(d.to_chrono<std::chrono::duration<double>>())) {

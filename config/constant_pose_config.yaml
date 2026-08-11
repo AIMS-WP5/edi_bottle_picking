@@ -23,3 +23,14 @@ pose_after_pickup: "near_box"       # transit pose after a successful pick / ins
 pose_dp_handoff: "ai_start2"
 pose_retreat_fallback: "near_box"   # safe_retreat() last resort when pose_above_box is unreachable
 pose_dropoff: "inter_floor_4"       # where a bottle is dumped after a failed insertion
+
+# Backend flags (tri-state: auto | "true" | "false"; launch arg overrides these).
+# simulation: "true" = Isaac Sim is the primary plant (skip UR /set_io vacuum, trust sim
+#   grasp status, flip Isaac drive gains); "false" = real robot / URSim. auto (default)
+#   falls back to the use_sim_time heuristic with a one-time WARN -- set explicitly for
+#   bag-replay/Gazebo/hybrid deployments.
+# mirror_to_isaac: forward vacuum commands to Isaac's /vacuum_gripper/command bridge.
+#   auto (default) follows the resolved simulation value; hybrid bring-ups (URSim/real
+#   primary + Isaac follower) set "true" explicitly.
+simulation: auto
+mirror_to_isaac: auto

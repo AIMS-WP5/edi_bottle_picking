@@ -51,13 +51,17 @@ int main(int argc, char ** argv)
   ManipulatorInterface manipulator(application.node_, application.move_group_ptr, application.gripper_action_client_ptr, 
                                    application.tf_buffer_ptr);
 
-  // use_sim_time signals Isaac Sim (URSim/real run wall-clock); the facade only sends the
-  // Isaac drive-gain flip when this is true.
-  bool is_isaac = application.node_->get_parameter("use_sim_time").as_bool();
+  // Backend flags: explicit `simulation` / `mirror_to_isaac` (launch arg > yaml > fallback:
+  // simulation from use_sim_time with a WARN, mirror follows simulation). See vacuum_commander.h.
+  edi_bottle_picking::BackendFlags backend = edi_bottle_picking::resolve_backend_flags(
+      application.node_,
+      config["simulation"] ? config["simulation"].as<std::string>() : "auto",
+      config["mirror_to_isaac"] ? config["mirror_to_isaac"].as<std::string>() : "auto",
+      LOGGER);
   edi_bottle_picking::apply_pose_overrides(application.node_, scenario_poses, "constant_pose");
 
   ConstantPoseUtils constant_pose_utils(manipulator, pose_from_topic, pose_topic_name, default_controller,
-                                        debug, is_isaac, scenario_poses);
+                                        debug, backend, scenario_poses);
 
   rclcpp::Duration d = rclcpp::Duration::from_seconds(1.0);
   if(!application.gripper_action_client_ptr->wait_for_action_server(d.to_chrono<std::chrono::duration<double>>())) {

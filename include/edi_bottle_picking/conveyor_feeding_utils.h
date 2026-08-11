@@ -5,6 +5,7 @@
 #include <manipulator_interface/manipulator_interface.h>
 #include <edi_bottle_picking/control_mode_switcher.h>
 #include <edi_bottle_picking/scenario_poses.h>
+#include <edi_bottle_picking/vacuum_commander.h>
 #include <ur_msgs/msg/io_states.hpp>
 #include <ur_msgs/msg/digital.hpp>
 #include <std_srvs/srv/set_bool.hpp>
@@ -25,7 +26,7 @@ namespace conveyor_feeding_utils
 	class ConveyorFeedingUtils
     {
     public:
-    ConveyorFeedingUtils(manipulator_interface::ManipulatorInterface& manipulator, std::string grasp_pose_topic, std::string default_controller, bool debug = false, bool is_isaac = false, int max_pick_attempts = 3,
+    ConveyorFeedingUtils(manipulator_interface::ManipulatorInterface& manipulator, std::string grasp_pose_topic, std::string default_controller, bool debug = false, edi_bottle_picking::BackendFlags backend = {}, int max_pick_attempts = 3,
                          std::string insertion_mode = "dp", std::string socket_pose_topic = "socket_center",
                          std::array<double, 3> moveit_insert_offset = {0.0, 0.0, 0.0}, double moveit_insert_above_dz = 0.10,
                          std::array<double, 4> moveit_insert_orientation = {0.515881, 0.483598, -0.515881, -0.483598},
@@ -71,12 +72,8 @@ namespace conveyor_feeding_utils
     bool get_grasped_status(int timeout_sec = 5);
 
 	private:
-        /** \brief Command the vacuum gripper: in sim (is_isaac) skips the UR /set_io path
-            and mirrors the command to Isaac Sim's vacuum bridge; on real hardware drives the
-            UR gripper. Returns the gripper result. */
+        /** \brief Command the vacuum gripper (delegates to the shared VacuumCommander). */
         bool command_vacuum(bool grip);
-        /** \brief Best-effort SetBool call to the Isaac vacuum bridge (no-op if absent). */
-        void set_isaac_vacuum(bool grip);
 
         /** \brief Debug step-gate; forwards to the shared manipulator_interface::DebugStepGate
             installed on manipulator_ by our constructor (topic /conveyor_feeding/debug).
@@ -170,7 +167,7 @@ namespace conveyor_feeding_utils
         rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr sub_socket_pose_;
         geometry_msgs::msg::Pose curr_socket_pose_;
         std::atomic<bool> socket_received_{false};
-        rclcpp::Client<std_srvs::srv::SetBool>::SharedPtr isaac_vacuum_client_;
+        std::unique_ptr<edi_bottle_picking::VacuumCommander> vacuum_;
         rclcpp::Client<moveit_msgs::srv::GetPositionIK>::SharedPtr ik_client_;  // /compute_ik (move_group)
         geometry_msgs::msg::Pose curr_grasp_pose_;
         // frame_id of the last received grasp pose; empty -> assume the camera frame.

@@ -9,8 +9,8 @@ namespace constant_pose_utils
 const rclcpp::Logger LOGGER = rclcpp::get_logger("constant_pose_utils");
 
 ConstantPoseUtils::ConstantPoseUtils(manipulator_interface::ManipulatorInterface& manipulator, bool pose_from_topic, std::string pose_topic_name,
-    std::string default_controller, bool debug, bool is_isaac, edi_bottle_picking::ScenarioPoses poses)
-    : manipulator_(manipulator), debug_(debug), use_pose_from_topic_(pose_from_topic), simulation_(is_isaac),
+    std::string default_controller, bool debug, edi_bottle_picking::BackendFlags backend, edi_bottle_picking::ScenarioPoses poses)
+    : manipulator_(manipulator), debug_(debug), use_pose_from_topic_(pose_from_topic),
       default_controller_(default_controller), poses_(poses)
 {
 	if (use_pose_from_topic_) {
@@ -29,8 +29,9 @@ ConstantPoseUtils::ConstantPoseUtils(manipulator_interface::ManipulatorInterface
 		curr_grasp_pose_.orientation.w = 0.014547;
 	}
 	control_switcher_ = std::make_unique<edi_bottle_picking::ControlModeSwitcher>(
-		manipulator.node_, is_isaac, default_controller_);
-	isaac_vacuum_client_ = manipulator.node_->create_client<std_srvs::srv::SetBool>("/vacuum_gripper/command");
+		manipulator.node_, backend.simulation, default_controller_);
+	vacuum_ = std::make_unique<edi_bottle_picking::VacuumCommander>(
+		manipulator.node_, manipulator, backend);
 	// Propagate this driver's debug flag (config/constant_pose_config.yaml, default true) into
 	// the shared step-gate, so the cartesian_goal prompts keep stepping for operators who run
 	// this scenario interactively -- they used to block unconditionally.
@@ -44,36 +45,7 @@ ConstantPoseUtils::~ConstantPoseUtils()
 
 bool ConstantPoseUtils::command_vacuum(bool grip)
 {
-	bool ok;
-	if (simulation_) {
-		// Isaac/TopicBasedSystem has no UR /set_io service, so activate_vacuum_gripper()
-		// would block ~5 s on it and report the grasp failed (aborting the pick). In sim the
-		// suction is modelled entirely by the Isaac bridge, so skip the UR IO path.
-		ok = true;
-	} else {
-		ok = manipulator_.activate_vacuum_gripper(grip);
-	}
-	// Mirror the command to Isaac Sim's vacuum bridge (best-effort; warns + continues if absent).
-	set_isaac_vacuum(grip);
-	return ok;
-}
-
-void ConstantPoseUtils::set_isaac_vacuum(bool grip)
-{
-	if (!isaac_vacuum_client_->service_is_ready()) {
-		RCLCPP_WARN(LOGGER, "Isaac vacuum service '/vacuum_gripper/command' not available; "
-		                    "skipping sim %s command", grip ? "GRIP" : "RELEASE");
-		return;
-	}
-	auto request = std::make_shared<std_srvs::srv::SetBool::Request>();
-	request->data = grip;
-	isaac_vacuum_client_->async_send_request(
-		request,
-		[grip](rclcpp::Client<std_srvs::srv::SetBool>::SharedFuture future) {
-			auto response = future.get();
-			RCLCPP_INFO(LOGGER, "Isaac vacuum %s -> success=%d (%s)",
-			            grip ? "GRIP" : "RELEASE", response->success, response->message.c_str());
-		});
+	return vacuum_->command(grip);
 }
 
 void ConstantPoseUtils::grasp_pose_callback(const geometry_msgs::msg::PoseStamped::SharedPtr msg)

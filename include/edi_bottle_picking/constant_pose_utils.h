@@ -5,6 +5,7 @@
 #include <manipulator_interface/manipulator_interface.h>
 #include <edi_bottle_picking/control_mode_switcher.h>
 #include <edi_bottle_picking/scenario_poses.h>
+#include <edi_bottle_picking/vacuum_commander.h>
 #include <ur_msgs/msg/io_states.hpp>
 #include <ur_msgs/msg/digital.hpp>
 #include <std_srvs/srv/set_bool.hpp>
@@ -19,7 +20,7 @@ namespace constant_pose_utils
     public:
     ConstantPoseUtils(manipulator_interface::ManipulatorInterface& manipulator,  bool pose_from_topic, std::string pose_topic_name,
                       std::string default_controller = "joint_trajectory_controller",
-                      bool debug = true, bool is_isaac = false,
+                      bool debug = true, edi_bottle_picking::BackendFlags backend = {},
                       edi_bottle_picking::ScenarioPoses poses = {}); // Constructor
 
     ~ConstantPoseUtils(); // Destructor
@@ -33,17 +34,13 @@ namespace constant_pose_utils
     bool pickup();
 
 	private:
-        /** \brief Command the vacuum gripper: in sim (is_isaac) skips the UR /set_io path
-            and mirrors the command to Isaac Sim's vacuum bridge; on real hardware drives the
-            UR gripper. Returns the gripper result. */
+        /** \brief Command the vacuum gripper (delegates to the shared VacuumCommander). */
         bool command_vacuum(bool grip);
-        /** \brief Best-effort SetBool call to the Isaac vacuum bridge (no-op if absent). */
-        void set_isaac_vacuum(bool grip);
 
         manipulator_interface::ManipulatorInterface& manipulator_;
-        bool debug_, success_, use_pose_from_topic_, simulation_;
+        bool debug_, success_, use_pose_from_topic_;
         rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr sub_grasp_pose_;
-        rclcpp::Client<std_srvs::srv::SetBool>::SharedPtr isaac_vacuum_client_;
+        std::unique_ptr<edi_bottle_picking::VacuumCommander> vacuum_;
         geometry_msgs::msg::Pose curr_grasp_pose_;
         std::unique_ptr<edi_bottle_picking::ControlModeSwitcher> control_switcher_;
         /** Position controller to switch back to after the DP velocity segment.

@@ -5,6 +5,7 @@
 #include <manipulator_interface/manipulator_interface.h>
 #include <edi_bottle_picking/control_mode_switcher.h>
 #include <edi_bottle_picking/scenario_poses.h>
+#include <edi_bottle_picking/vacuum_commander.h>
 #include <ur_msgs/msg/io_states.hpp>
 #include <ur_msgs/msg/digital.hpp>
 #include <std_srvs/srv/set_bool.hpp>
@@ -17,7 +18,10 @@ namespace grasping_test_utils
 	class GraspingTestUtils
     {
     public:
-    GraspingTestUtils(manipulator_interface::ManipulatorInterface& manipulator, std::string grasp_pose_topic, bool debug = false, bool simulation = false, bool run_dp_switchover = true,
+    GraspingTestUtils(manipulator_interface::ManipulatorInterface& manipulator, std::string grasp_pose_topic,
+                      std::string default_controller = "joint_trajectory_controller",
+                      bool debug = false, edi_bottle_picking::BackendFlags backend = {},
+                      bool run_dp_switchover = true,
                       edi_bottle_picking::ScenarioPoses poses = {}); // Constructor
 
     ~GraspingTestUtils(); // Destructor
@@ -44,20 +48,20 @@ namespace grasping_test_utils
     bool get_grasped_status(int timeout_sec = 5);
 
 	private:
-        /** \brief Command the vacuum gripper: drives the real UR gripper AND mirrors the
-            command to Isaac Sim's vacuum bridge. Returns the real-gripper result. */
+        /** \brief Command the vacuum gripper (delegates to the shared VacuumCommander). */
         bool command_vacuum(bool grip);
-        /** \brief Best-effort SetBool call to the Isaac vacuum bridge (no-op if absent). */
-        void set_isaac_vacuum(bool grip);
 
         manipulator_interface::ManipulatorInterface& manipulator_;
         bool debug_, success_;
         bool simulation_;
         bool run_dp_switchover_;
+        /** Position controller to switch back to after the DP velocity segment.
+            scaled_joint_trajectory_controller on the real robot. */
+        std::string default_controller_;
         /** Named SRDF poses; see scenario_poses.h for the edi-vs-isaac cell split. */
         edi_bottle_picking::ScenarioPoses poses_;
         rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr sub_grasp_pose_;
-        rclcpp::Client<std_srvs::srv::SetBool>::SharedPtr isaac_vacuum_client_;
+        std::unique_ptr<edi_bottle_picking::VacuumCommander> vacuum_;
         std::unique_ptr<edi_bottle_picking::ControlModeSwitcher> control_switcher_;
         geometry_msgs::msg::Pose curr_grasp_pose_;
         // frame_id of the last received grasp pose; empty -> assume the camera frame.

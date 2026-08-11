@@ -84,9 +84,13 @@ int main(int argc, char ** argv)
   ManipulatorInterface manipulator(application.node_, application.move_group_ptr, application.gripper_action_client_ptr, 
                                    application.tf_buffer_ptr);
 
-  // use_sim_time signals Isaac Sim (URSim/real run wall-clock); the facade only sends the
-  // Isaac drive-gain flip when this is true.
-  bool is_isaac = application.node_->get_parameter("use_sim_time").as_bool();
+  // Backend flags: explicit `simulation` / `mirror_to_isaac` (launch arg > yaml > fallback:
+  // simulation from use_sim_time with a WARN, mirror follows simulation). See vacuum_commander.h.
+  edi_bottle_picking::BackendFlags backend = edi_bottle_picking::resolve_backend_flags(
+      application.node_,
+      config["simulation"] ? config["simulation"].as<std::string>() : "auto",
+      config["mirror_to_isaac"] ? config["mirror_to_isaac"].as<std::string>() : "auto",
+      application.node_->get_logger());
 
   // The YAML value is the default; a `debug` ROS param (set by conveyor_feeding.launch.py /
   // bringup_sim_stack.sh --debug|--no-debug) overrides it. It can also be toggled live at
@@ -173,7 +177,7 @@ int main(int argc, char ** argv)
   // values, and log the resolved set (same declare-if-absent pattern as `insertion_mode`).
   edi_bottle_picking::apply_pose_overrides(application.node_, scenario_poses, "conveyor_feeding");
 
-  ConveyorFeedingUtils conveyor_feeding_utils(manipulator, grasp_pose_topic, default_controller, debug, is_isaac, max_pick_attempts,
+  ConveyorFeedingUtils conveyor_feeding_utils(manipulator, grasp_pose_topic, default_controller, debug, backend, max_pick_attempts,
                                               insertion_mode, socket_pose_topic, insert_offset, moveit_insert_above_dz, insert_orientation,
                                               moveit_insert_descent_collision_check,
                                               moveit_insert_fallback_max_waypoints, moveit_insert_validate_descent,

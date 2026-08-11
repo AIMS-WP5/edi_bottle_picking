@@ -8,19 +8,21 @@ namespace grasping_test_utils
 
 const rclcpp::Logger LOGGER = rclcpp::get_logger("grasping_test_utils");
 
-GraspingTestUtils::GraspingTestUtils(manipulator_interface::ManipulatorInterface& manipulator, std::string grasp_pose_topic, bool debug, bool simulation, bool run_dp_switchover,
+GraspingTestUtils::GraspingTestUtils(manipulator_interface::ManipulatorInterface& manipulator, std::string grasp_pose_topic,
+    std::string default_controller, bool debug, edi_bottle_picking::BackendFlags backend, bool run_dp_switchover,
     edi_bottle_picking::ScenarioPoses poses)
-    : manipulator_(manipulator), debug_(debug), simulation_(simulation), run_dp_switchover_(run_dp_switchover),
-      poses_(poses)
+    : manipulator_(manipulator), debug_(debug), simulation_(backend.simulation), run_dp_switchover_(run_dp_switchover),
+      default_controller_(default_controller), poses_(poses)
 {
 	sub_grasp_pose_ = manipulator.node_->create_subscription<geometry_msgs::msg::PoseStamped>(
 		grasp_pose_topic, 10, std::bind(&GraspingTestUtils::grasp_pose_callback, this, _1)
 	);
-	isaac_vacuum_client_ = manipulator.node_->create_client<std_srvs::srv::SetBool>("/vacuum_gripper/command");
-	// simulation_ (== use_sim_time) signals Isaac Sim, where the control switch must also
-	// flip the joint-drive gains; on real/URSim the gain-flip is a best-effort no-op.
+	vacuum_ = std::make_unique<edi_bottle_picking::VacuumCommander>(
+		manipulator.node_, manipulator, backend);
+	// On simulation the control switch must also flip the Isaac joint-drive gains; on
+	// real/URSim the gain-flip is a best-effort no-op.
 	control_switcher_ = std::make_unique<edi_bottle_picking::ControlModeSwitcher>(
-		manipulator.node_, simulation_, "joint_trajectory_controller");
+		manipulator.node_, backend.simulation, default_controller_);
 	// Propagate this driver's debug flag (config/grasping_test_config.yaml, default true) into
 	// the shared step-gate, so the cartesian_goal prompts keep stepping for operators who run
 	// this scenario interactively -- they used to block unconditionally.
@@ -34,39 +36,7 @@ GraspingTestUtils::~GraspingTestUtils()
 
 bool GraspingTestUtils::command_vacuum(bool grip)
 {
-	bool ok;
-	if (simulation_) {
-		// Isaac/TopicBasedSystem has no UR /set_io service, so activate_vacuum_gripper()
-		// would block ~5 s on it and report the grasp failed (aborting the pick). In sim
-		// the suction is modelled entirely by the Isaac bridge, so skip the UR IO path.
-		ok = true;
-	} else {
-		// Drive the real UR vacuum gripper (via UR IO) -- unchanged behaviour on hardware.
-		ok = manipulator_.activate_vacuum_gripper(grip);
-	}
-	// Mirror the same command to Isaac Sim's (hacky) vacuum bridge. Best-effort, so a
-	// real-hardware run with no bridge just logs a warning and continues.
-	set_isaac_vacuum(grip);
-	return ok;
-}
-
-void GraspingTestUtils::set_isaac_vacuum(bool grip)
-{
-	if (!isaac_vacuum_client_->service_is_ready()) {
-		RCLCPP_WARN(LOGGER, "Isaac vacuum service '/vacuum_gripper/command' not available; "
-		                    "skipping sim %s command", grip ? "GRIP" : "RELEASE");
-		return;
-	}
-	auto request = std::make_shared<std_srvs::srv::SetBool::Request>();
-	request->data = grip;
-	// Fire-and-forget; the response is handled on the spinning executor thread.
-	isaac_vacuum_client_->async_send_request(
-		request,
-		[grip](rclcpp::Client<std_srvs::srv::SetBool>::SharedFuture future) {
-			auto response = future.get();
-			RCLCPP_INFO(LOGGER, "Isaac vacuum %s -> success=%d (%s)",
-			            grip ? "GRIP" : "RELEASE", response->success, response->message.c_str());
-		});
+	return vacuum_->command(grip);
 }
 
 bool GraspingTestUtils::add_box() {
