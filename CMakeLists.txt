@@ -65,6 +65,11 @@ ament_target_dependencies(
   std_srvs
 )
 
+# Explicit link: Ubuntu's libyaml-cpp-dev 0.7.0 config exports only YAML_CPP_LIBRARIES,
+# not the yaml-cpp_LIBRARIES ament_target_dependencies() reads, so on some hosts the
+# dependency above contributes headers only. The imported target is always defined.
+target_link_libraries(grasping_test yaml-cpp)
+
 add_executable(constant_pose src/constant_pose.cpp
 				   src/constant_pose_utils.cpp
 				   src/vacuum_commander.cpp
@@ -89,6 +94,11 @@ ament_target_dependencies(
   controller_manager_msgs
   std_srvs
 )
+
+# Explicit link: Ubuntu's libyaml-cpp-dev 0.7.0 config exports only YAML_CPP_LIBRARIES,
+# not the yaml-cpp_LIBRARIES ament_target_dependencies() reads, so on some hosts the
+# dependency above contributes headers only. The imported target is always defined.
+target_link_libraries(constant_pose yaml-cpp)
 
 add_executable(conveyor_feeding src/conveyor_feeding.cpp
 				   src/conveyor_feeding_utils.cpp
@@ -117,6 +127,11 @@ ament_target_dependencies(
   std_msgs
   sensor_msgs
 )
+
+# Explicit link: Ubuntu's libyaml-cpp-dev 0.7.0 config exports only YAML_CPP_LIBRARIES,
+# not the yaml-cpp_LIBRARIES ament_target_dependencies() reads, so on some hosts the
+# dependency above contributes headers only. The imported target is always defined.
+target_link_libraries(conveyor_feeding yaml-cpp)
 
 install(
   DIRECTORY include/
