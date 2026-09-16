@@ -279,7 +279,9 @@ if [[ "$INSERTION_MODE" == "moveit" ]]; then
 else
     echo "== phase 2: DP node ($MODEL_NAME, steps=$STEP_COUNT)$( ((RUN_BESTGRASP)) && echo ' + grasp stand-in') =="
     PAD_AS_MARKER=$( [[ "$PLANNER" == "cumotion" ]] && echo "true" || echo "false" )
-    newwin dp        "ros2 launch diff_physics launch.yaml model_run:=true model_name:=$MODEL_NAME step_count:=$STEP_COUNT collision_check:=$COLLISION_CHECK max_velocity:=$MAX_VELOCITY use_sim_time:=true pad_as_marker:=$PAD_AS_MARKER"
+    # This deprecated stack keeps the legacy topic names (edi_isaacsim publishes /socket_center;
+    # conveyor_feeding drives /can_update_socket); the DP node defaults to the v3 names.
+    newwin dp        "ros2 launch diff_physics launch.yaml goal_topic:=/socket_center can_update_topic:=/can_update_socket model_run:=true model_name:=$MODEL_NAME step_count:=$STEP_COUNT collision_check:=$COLLISION_CHECK max_velocity:=$MAX_VELOCITY use_sim_time:=true pad_as_marker:=$PAD_AS_MARKER"
 fi
 
 # cuMotion planner node (exactly ONE instance). Started before the pick so the readiness
