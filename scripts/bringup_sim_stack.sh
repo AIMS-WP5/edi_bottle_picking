@@ -39,8 +39,8 @@
 #
 # --planner: only "ompl" remains. The NVIDIA cuMotion MoveIt pipeline ("cumotion", with its
 # --retime-plans / --time-dilation A/B knobs) was retired in the curobo consolidation
-# (codegen-ros-support/status/curobo-consolidation/); the comparison record lives in
-# status/cumotion-initial-integration/.
+# (WS_EDI/status/codegen-ros-support/curobo-consolidation/); the comparison record lives
+# in WS_EDI/status/edi_bottle_picking/cumotion-initial-integration/.
 #
 # --grasp-aware true (moveit insertion mode only): derive the insert EE pose from the measured
 # bottle-in-hand transform (grasp_in_hand, published by Isaac at the suction bond) instead of
