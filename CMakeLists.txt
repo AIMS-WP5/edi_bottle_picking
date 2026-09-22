@@ -150,7 +150,6 @@ install(
 install(PROGRAMS
   scripts/vacuum_gripper_bridge.py
   scripts/velocity_mode_bridge.py
-  scripts/cumotion_smoke_test.py
   DESTINATION lib/${PROJECT_NAME})
 
 install(
