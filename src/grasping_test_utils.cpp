@@ -178,7 +178,7 @@ bool GraspingTestUtils::pick_up()
 	if(debug_){
 		manipulator_.world_marker_->prompt("press 'Next' to go above box");
 	}
-	success_ = manipulator_.predefined_pose("above_box_2");
+	success_ = manipulator_.predefined_pose("above_box");
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
@@ -214,7 +214,7 @@ bool GraspingTestUtils::pick_up()
 		if (debug_) {
 			manipulator_.world_marker_->prompt("press 'Next' to move back above box");
 		}
-		success_ = manipulator_.predefined_pose("above_box_2");
+		success_ = manipulator_.predefined_pose("above_box");
 		return 0;
 	}
 
@@ -224,7 +224,7 @@ bool GraspingTestUtils::pick_up()
 		return 0;
 	}
 
-	success_ = manipulator_.predefined_pose("above_box_2");
+	success_ = manipulator_.predefined_pose("above_box");
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;

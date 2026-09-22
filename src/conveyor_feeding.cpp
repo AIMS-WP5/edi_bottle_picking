@@ -57,7 +57,7 @@ int main(int argc, char ** argv)
 
   RCLCPP_INFO(LOGGER, "PLANNER FRAME: %s", application.move_group_ptr->getPlanningFrame().c_str());
 
-  conveyor_feeding_utils.add_box();
+  // conveyor_feeding_utils.add_box();
 
   bool success;
   int iter_count = 0;
@@ -66,6 +66,10 @@ int main(int argc, char ** argv)
   {
     RCLCPP_INFO(LOGGER, "Starting iteration %d out of %d", iter_count+1, total_iterations);
     application.moveit_visual_tools_->deleteAllMarkers();
+    // if (iter_count%4==0) {
+    //   manipulator.world_marker_->prompt("Start 4 iterations");
+    // }
+    manipulator.world_marker_->prompt("Start iteration");
     success = conveyor_feeding_utils.run();
     if (success){
         RCLCPP_INFO(LOGGER, "Iteration %d successful", iter_count+1);

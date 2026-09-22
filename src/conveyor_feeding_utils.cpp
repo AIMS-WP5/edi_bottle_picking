@@ -140,15 +140,15 @@ bool ConveyorFeedingUtils::run()
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
 	}
-	manipulator_.world_marker_->prompt("Start iteration");
+	// manipulator_.world_marker_->prompt("Start iteration");
 
-	success_ = manipulator_.activate_vacuum_gripper(false);
-	if (!success_) {
-		RCLCPP_ERROR(LOGGER, "Pick action failed!");
-		return 0;
-	} else {
-		RCLCPP_INFO(LOGGER, "Suction disabled!");
-	}
+	// success_ = manipulator_.activate_vacuum_gripper(false);
+	// if (!success_) {
+	// 	RCLCPP_ERROR(LOGGER, "Pick action failed!");
+	// 	return 0;
+	// } else {
+	// 	RCLCPP_INFO(LOGGER, "Suction disabled!");
+	// }
 
 	if(debug_){
 		manipulator_.world_marker_->prompt("press 'Next' to get object grasp pose");
@@ -182,7 +182,7 @@ bool ConveyorFeedingUtils::run()
 	if(debug_){
 		manipulator_.world_marker_->prompt("press 'Next' to go above box");
 	}
-	success_ = manipulator_.predefined_pose("above_box_2");
+	success_ = manipulator_.predefined_pose("above_box");
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
@@ -218,7 +218,7 @@ bool ConveyorFeedingUtils::run()
 		if(debug_){
 			manipulator_.world_marker_->prompt("press 'Next' to move back above box");
 		}
-		success_ = manipulator_.predefined_pose("above_box_2");
+		success_ = manipulator_.predefined_pose("above_box");
 		return 0;
 	}
 
@@ -231,7 +231,7 @@ bool ConveyorFeedingUtils::run()
 	if(debug_){
 		manipulator_.world_marker_->prompt("press 'Next' to move back above box");
 	}
-	success_ = manipulator_.predefined_pose("above_box_2");
+	success_ = manipulator_.predefined_pose("above_box");
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
@@ -247,13 +247,13 @@ bool ConveyorFeedingUtils::run()
 	}
 
 	auto socket_upd_msg = std_msgs::msg::Bool();
-	socket_upd_msg.data = false;
-	pub_can_update_socket_->publish(socket_upd_msg);
+	// socket_upd_msg.data = false;
+	// pub_can_update_socket_->publish(socket_upd_msg);
 
 	if(debug_){
 		manipulator_.world_marker_->prompt("press 'Next' to move to ai start");
 	}
-	success_ = manipulator_.predefined_pose("ai_start2");
+	success_ = manipulator_.predefined_pose("ai_start");
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
@@ -286,7 +286,7 @@ bool ConveyorFeedingUtils::run()
 		if(debug_){
 			manipulator_.world_marker_->prompt("press 'Next' to move back");
 		}
-		success_ = manipulator_.predefined_pose("ai_start2");
+		success_ = manipulator_.predefined_pose("ai_start");
 		if(!success_){
 			RCLCPP_ERROR(LOGGER, "Pick action failed!");
 			return 0;
@@ -307,7 +307,7 @@ bool ConveyorFeedingUtils::run()
 	if(debug_){
 		manipulator_.world_marker_->prompt("press 'Next' to move back");
 	}
-	manipulator_.predefined_pose("ai_start2");
+	manipulator_.predefined_pose("ai_start");
 	manipulator_.predefined_pose("near_box");
 	if(debug_){
 		manipulator_.world_marker_->prompt("press 'Next' to drop off bottle");

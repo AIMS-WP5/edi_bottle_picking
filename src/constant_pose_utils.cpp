@@ -179,7 +179,7 @@ bool ConstantPoseUtils::pickup()
 	if(debug_){
 		manipulator_.world_marker_->prompt("press 'Next' to move above socket");
 	}
-	success_ = manipulator_.predefined_pose("ai_start2");
+	success_ = manipulator_.predefined_pose("ai_start");
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
@@ -212,7 +212,7 @@ bool ConstantPoseUtils::pickup()
 		if(debug_){
 			manipulator_.world_marker_->prompt("press 'Next' to go back");
 		}
-		success_ = manipulator_.predefined_pose("ai_start2");
+		success_ = manipulator_.predefined_pose("ai_start");
 		if(!success_){
 			RCLCPP_ERROR(LOGGER, "Pick action failed!");
 			return 0;
@@ -227,7 +227,7 @@ bool ConstantPoseUtils::pickup()
 	if(debug_){
 		manipulator_.world_marker_->prompt("press 'Next' to go back");
 	}
-	success_ = manipulator_.predefined_pose("ai_start2");
+	success_ = manipulator_.predefined_pose("ai_start");
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
