@@ -16,11 +16,11 @@ default_controller: "joint_trajectory_controller" # scaled_joint_trajectory_cont
 #   these keys. Ground truth for both sets: robo-codegen-edi ur5e_common.py
 #   NAMED_JOINT_CONFIG_EE_POSES.
 pose_initial: "near_box"            # one-time startup/home pose before the iteration loop
-pose_above_box: "above_box_2"       # staging pose above the pick box (approach + retreat)
+pose_above_box: "above_box"         # staging pose above the pick box (approach + retreat)
 pose_after_pickup: "near_box"       # transit pose after a successful pick / insert cleanup
 # Canonical DP hand-off configuration. NOT swapped by pose_set and should not be changed: the
 # DP policy was trained from this exact configuration and it seeds the moveit-mode insertion IK.
-pose_dp_handoff: "ai_start2"
+pose_dp_handoff: "ai_start"
 pose_retreat_fallback: "near_box"   # safe_retreat() last resort when pose_above_box is unreachable
 pose_dropoff: "inter_floor_4"       # where a bottle is dumped after a failed insertion
 

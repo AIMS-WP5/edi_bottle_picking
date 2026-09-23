@@ -17,7 +17,7 @@ def generate_launch_description():
             "pose_set",
             default_value="edi",
             description="Which cell's named SRDF poses to drive. 'edi' (default) = the real EDI "
-                        "cell's box-approach poses (above_box_2 / near_box), which are equally "
+                        "cell's box-approach poses (above_box / near_box), which are equally "
                         "robo-codegen-edi's sim bin. 'isaac' = the legacy edi_isaacsim scene's box "
                         "(above_box_1 / ai_after_pickup / wait_slam) -- edi_isaacsim is being "
                         "DEPRECATED, and bringup_sim_stack.sh passes this to keep that world "

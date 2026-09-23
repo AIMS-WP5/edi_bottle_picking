@@ -15,7 +15,7 @@
 # ====================================================================================
 # (Historical note: this script kept working only because it passes pose_set:=isaac to
 # conveyor_feeding — the scenario's DEFAULT named poses are the real EDI cell's
-# (above_box_2 / near_box), on the OPPOSITE SIDE of the robot from this scene's box.)
+# (above_box / near_box), on the OPPOSITE SIDE of the robot from this scene's box.)
 #
 # Start the Isaac scene first:  python simplified_ur5_scene.py --omnigraph  (press Play),
 # THEN run this script. (It does not touch Isaac -- you start/stop that yourself.)
@@ -240,7 +240,11 @@ fi
 
 echo "== phase 1: control + MoveIt + bridges =="
 newwin control   "ros2 launch edi_moveit_config edi_ur_control.launch.py ur_type:=ur5e sim_isaac:=true gripper_type:=$GRIPPER_TYPE use_sim_time:=true initial_joint_controller:=joint_trajectory_controller"
-newwin moveit    "ros2 launch edi_moveit_config edi_ur_moveit.launch.py ur_type:=ur5e sim_isaac:=true gripper_type:=$GRIPPER_TYPE use_sim_time:=true launch_rviz:=true${RVIZ_CFG:+ rviz_config:=$RVIZ_CFG}"
+# above_box_1 (the isaac pose set's box staging pose) left the shared edi_ur SRDF in the
+# 2026-09 pose cleanup; this package's SRDF fragment re-adds it via extra_srdf.
+ISAAC_POSES_SRDF="$(ros2 pkg prefix --share edi_bottle_picking)/config/srdf/isaac_legacy_poses.srdf.xacro"
+[[ -f "$ISAAC_POSES_SRDF" ]] || { echo "isaac_legacy_poses.srdf.xacro not found at $ISAAC_POSES_SRDF (rebuild edi_bottle_picking?)" >&2; exit 1; }
+newwin moveit    "ros2 launch edi_moveit_config edi_ur_moveit.launch.py ur_type:=ur5e sim_isaac:=true gripper_type:=$GRIPPER_TYPE use_sim_time:=true launch_rviz:=true extra_srdf:=$ISAAC_POSES_SRDF${RVIZ_CFG:+ rviz_config:=$RVIZ_CFG}"
 newwin velbridge "ros2 launch edi_bottle_picking velocity_mode_bridge.launch.py"
 newwin vacbridge "ros2 launch edi_bottle_picking vacuum_gripper_bridge.launch.py"
 
@@ -269,7 +273,7 @@ if (( RUN_BESTGRASP )); then
 fi
 
 if (( RUN_PICK )); then
-    # No goal-topic gate here: conveyor_feeding runs its MoveIt pick and moves to ai_start2
+    # No goal-topic gate here: conveyor_feeding runs its MoveIt pick and moves to ai_start
     # before the DP segment, so /socket_center (published by the Isaac OmniGraph) is live well
     # before run_dp_segment() reads it. (The old /object_point wait was a stale check -- that
     # topic was renamed to /socket_center -- so it always burned its full 60 s timeout.)

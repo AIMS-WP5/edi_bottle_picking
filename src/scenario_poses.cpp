@@ -49,14 +49,14 @@ void apply_pose_overrides(const rclcpp::Node::SharedPtr & node, ScenarioPoses & 
     const std::string pose_set = param_or(node, "pose_set", "");
     if (pose_set == "isaac") {
         // The legacy edi_isaacsim box (tool0 on the -Y side). dp_handoff is deliberately NOT
-        // touched -- ai_start2 is canonical for the DP policy in both cells.
+        // touched -- ai_start is canonical for the DP policy in both cells.
         poses.initial          = "wait_slam";
         poses.above_box        = "above_box_1";
         poses.after_pickup     = "ai_after_pickup";
         poses.retreat_fallback = "wait_slam";
     } else if (pose_set == "edi") {
         poses.initial          = "near_box";
-        poses.above_box        = "above_box_2";
+        poses.above_box        = "above_box";
         poses.after_pickup     = "near_box";
         poses.retreat_fallback = "near_box";
     } else if (!pose_set.empty()) {

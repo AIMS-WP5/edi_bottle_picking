@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Legacy "isaac" pose-set states that the shared edi_ur SRDF no longer carries, included
+     into edi_moveit_config's ur5e.srdf.xacro via its `extra_srdf` arg (bringup_sim_stack.sh
+     passes extra_srdf:=<share>/config/srdf/isaac_legacy_poses.srdf.xacro).
+
+     edi_ur main dropped above_box_1 in the 2026-09 pose cleanup (ai_start2 -> ai_start,
+     above_box_2 -> above_box). The deprecated edi_isaacsim world (pose_set:=isaac, see
+     scenario_poses.h) still stages over its box from here; the other two isaac-set poses,
+     wait_slam and ai_after_pickup, are still in the shared SRDF. Joint values are the
+     pre-cleanup edi_ur definition, unchanged. Group name is the unprefixed
+     `ur_manipulator` (edi_ur_moveit.launch.py passes name:=ur and an empty prefix). -->
+<robot xmlns:xacro="http://wiki.ros.org/xacro">
+
+  <!-- above_box_1 - the edi_isaacsim scene's box-approach staging pose (world y ~ -0.47,
+       the opposite side of the robot from the real cell's above_box). -->
+  <group_state name="above_box_1" group="ur_manipulator">
+    <joint name="shoulder_pan_joint" value="-0.2090904443889207" />
+    <joint name="shoulder_lift_joint" value="-1.1770500475449759" />
+    <joint name="elbow_joint" value="1.002168056495144" />
+    <joint name="wrist_1_joint" value="-1.4191272147965894" />
+    <joint name="wrist_2_joint" value="-1.5069172761719043" />
+    <joint name="wrist_3_joint" value="0.023911010752322315" />
+  </group_state>
+
+</robot>
