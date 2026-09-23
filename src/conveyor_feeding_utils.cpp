@@ -478,10 +478,10 @@ bool ConveyorFeedingUtils::run()
 
 	maybe_prompt("press 'Next' to move to ai start");
 	{
-		// Pin the DP handoff (poses_.dp_handoff, canonically ai_start2) to OMPL (see
+		// Pin the DP handoff (poses_.dp_handoff, canonically ai_start) to OMPL (see
 		// PipelineScope). It is a named JOINT
 		// target and the segment that follows is start-configuration-sensitive: the DP policy
-		// was trained from the canonical ai_start2 configuration (iteration-8 matrix: cuMotion's
+		// was trained from the canonical ai_start configuration (iteration-8 matrix: cuMotion's
 		// IK-re-solved arrival put cumotion x dp placements ~13 cm off), and in moveit mode this
 		// config seeds the insertion IK. OMPL executes the exact joint target.
 		PipelineScope dp_handoff_scope{manipulator_, "ompl"};
@@ -750,7 +750,7 @@ std::optional<bool> ConveyorFeedingUtils::run_moveit_insert_segment(int socket_t
 	geometry_msgs::msg::Pose socket = curr_socket_pose_;
 
 	// Use the FIXED vertical-insertion orientation (config moveit_insert_orientation_xyzw), NOT
-	// the ai_start2 orientation: it holds the gripper horizontal so the bottle hangs straight
+	// the ai_start orientation: it holds the gripper horizontal so the bottle hangs straight
 	// down (wrist_3 ~ -176 deg), which keeps the wrist clear of the table on the vertical
 	// Cartesian descent. The MoveIt plan to above_pose handles the ~180 deg wrist flip; the
 	// descent reuses the same orientation so the tool pose is unchanged while descending.

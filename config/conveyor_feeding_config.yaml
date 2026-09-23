@@ -25,7 +25,7 @@ moveit_insert_above_dz: 0.10          # height above the insert pose for the Mov
 # Chosen so the gripper is HORIZONTAL (approach axis = world -X) and the held bottle hangs
 # straight DOWN (wrist_3 ~ -176 deg), so the Cartesian descent is vertical and the wrist
 # clears the table. Derived from move_bottle_to_gripper geometry + wrist_3->virtual_ee_link
-# Rz(180); see docs/plan. The MoveIt plan handles the ~180 deg wrist flip from ai_start2.
+# Rz(180); see docs/plan. The MoveIt plan handles the ~180 deg wrist flip from ai_start.
 moveit_insert_orientation_xyzw: [0.483598, -0.515881, -0.483598, 0.515881]
 # Collision-check the straight-down Cartesian descent. true = normal MoveIt collision checking
 # (safe; may abort if the planning scene's solid table/pad blocks the bottle reaching socket
@@ -105,11 +105,11 @@ moveit_insert_radius_aware: false
 #   these keys. Ground truth for both sets: robo-codegen-edi ur5e_common.py
 #   NAMED_JOINT_CONFIG_EE_POSES.
 pose_initial: "near_box"            # one-time startup/home pose before the iteration loop
-pose_above_box: "above_box_2"       # staging pose above the pick box (approach + retreat)
+pose_above_box: "above_box"         # staging pose above the pick box (approach + retreat)
 pose_after_pickup: "near_box"       # transit pose after a successful pick / insert cleanup
 # Canonical DP hand-off configuration. NOT swapped by pose_set and should not be changed: the
 # DP policy was trained from this exact configuration and it seeds the moveit-mode insertion IK.
-pose_dp_handoff: "ai_start2"
+pose_dp_handoff: "ai_start"
 pose_retreat_fallback: "near_box"   # safe_retreat() last resort when pose_above_box is unreachable
 pose_dropoff: "inter_floor_4"       # where a bottle is dumped after a failed insertion
 

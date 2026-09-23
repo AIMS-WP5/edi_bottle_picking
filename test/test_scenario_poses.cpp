@@ -27,10 +27,10 @@ TEST(ScenarioPoses, DefaultsAreTheRealCellSet)
 {
     ScenarioPoses p;
     EXPECT_EQ(p.initial, "near_box");
-    EXPECT_EQ(p.above_box, "above_box_2");
+    EXPECT_EQ(p.above_box, "above_box");
     EXPECT_EQ(p.after_pickup, "near_box");
     EXPECT_EQ(p.retreat_fallback, "near_box");
-    EXPECT_EQ(p.dp_handoff, "ai_start2");
+    EXPECT_EQ(p.dp_handoff, "ai_start");
     EXPECT_EQ(p.dropoff, "inter_floor_4");
 }
 
@@ -54,8 +54,8 @@ TEST(ScenarioPoses, IsaacPresetSelectsTheLegacyEdiIsaacsimBox)
     EXPECT_EQ(p.above_box, "above_box_1");
     EXPECT_EQ(p.after_pickup, "ai_after_pickup");
     EXPECT_EQ(p.retreat_fallback, "wait_slam");
-    // ai_start2 is canonical for the DP policy in BOTH cells and must survive the preset.
-    EXPECT_EQ(p.dp_handoff, "ai_start2");
+    // ai_start is canonical for the DP policy in BOTH cells and must survive the preset.
+    EXPECT_EQ(p.dp_handoff, "ai_start");
 }
 
 TEST(ScenarioPoses, EdiPresetRestoresTheRealCellSetOverYaml)
@@ -65,7 +65,7 @@ TEST(ScenarioPoses, EdiPresetRestoresTheRealCellSetOverYaml)
     ScenarioPoses p;
     p.above_box = "above_box_1";  // as if the YAML had pinned the legacy pose
     apply_pose_overrides(node, p, "test");
-    EXPECT_EQ(p.above_box, "above_box_2");
+    EXPECT_EQ(p.above_box, "above_box");
 }
 
 TEST(ScenarioPoses, EmptyPoseSetLeavesConfiguredPosesAlone)

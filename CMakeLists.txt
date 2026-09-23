@@ -156,6 +156,11 @@ install(
   DIRECTORY launch
   DESTINATION share/${PROJECT_NAME})
 
+# SRDF overlay for the legacy isaac pose set (bringup_sim_stack.sh -> extra_srdf)
+install(
+  DIRECTORY config/srdf
+  DESTINATION share/${PROJECT_NAME}/config)
+
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
   # Pins the named-pose resolution order (defaults -> YAML -> pose_set preset -> per-pose
