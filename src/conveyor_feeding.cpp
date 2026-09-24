@@ -16,7 +16,8 @@ YAML::Node config = YAML::LoadFile(config_file_path);
 bool debug = config["debug"].as<bool>();
 int total_iterations = config["iterations"].as<int>();
 std::string grasp_pose_topic = config["grasp_pose_topic"].as<std::string>();
-std::string default_controller = config["default_controller"].as<std::string>();
+std::string default_controller = config["default_controller"]
+    ? config["default_controller"].as<std::string>() : "auto";
 int max_pick_attempts = config["max_pick_attempts"] ? config["max_pick_attempts"].as<int>() : 3;
 std::string insertion_mode = config["insertion_mode"] ? config["insertion_mode"].as<std::string>() : "dp";
 std::string socket_pose_topic = config["socket_pose_topic"] ? config["socket_pose_topic"].as<std::string>() : "socket_center";

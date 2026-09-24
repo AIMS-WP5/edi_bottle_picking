@@ -1,4 +1,5 @@
 #include <edi_bottle_picking/control_mode_switcher.h>
+#include <edi_bottle_picking/position_controller_select.h>
 
 #include <chrono>
 #include <vector>
@@ -16,7 +17,8 @@ ControlModeSwitcher::ControlModeSwitcher(rclcpp::Node::SharedPtr node,
                                          std::string position_controller,
                                          std::string velocity_controller)
     : node_(node), is_isaac_(is_isaac),
-      position_controller_(std::move(position_controller)),
+      position_controller_(position_controller.empty() ? kAutoPositionController
+                                                       : std::move(position_controller)),
       velocity_controller_(std::move(velocity_controller)),
       dp_done_received_(false), dp_done_value_(false)
 {
@@ -33,6 +35,9 @@ ControlModeSwitcher::ControlModeSwitcher(rclcpp::Node::SharedPtr node,
 
 bool ControlModeSwitcher::to_velocity_control()
 {
+    if (!ensure_position_controller()) {
+        return false;
+    }
     // Controller switch first, then (Isaac) gain flip -- ordering verified on the bench.
     bool ok = switch_controllers(velocity_controller_, position_controller_);
     if (is_isaac_) {
@@ -45,6 +50,9 @@ bool ControlModeSwitcher::to_position_control()
 {
     // Activate the trajectory controller first (it latches the current pose), then
     // restore position-control gains so the arm holds against that fresh target.
+    if (!ensure_position_controller()) {
+        return false;
+    }
     bool ok = switch_controllers(position_controller_, velocity_controller_);
     if (is_isaac_) {
         set_isaac_velocity_mode(false);
@@ -110,8 +118,7 @@ std::optional<bool> ControlModeSwitcher::run_dp_segment(double timeout_sec)
     return result;
 }
 
-bool ControlModeSwitcher::switch_controllers(const std::string & activate,
-                                             const std::string & deactivate)
+rclcpp::Node::SharedPtr ControlModeSwitcher::make_tmp_node() const
 {
     // Use a short-lived node so we can spin_until_future_complete without contending with
     // the executor that is already spinning node_ on another thread. Inherit the parent's
@@ -119,7 +126,55 @@ bool ControlModeSwitcher::switch_controllers(const std::string & activate,
     rclcpp::NodeOptions sim_opts;
     sim_opts.parameter_overrides({
         rclcpp::Parameter("use_sim_time", node_->get_parameter("use_sim_time").as_bool())});
-    auto tmp_node = std::make_shared<rclcpp::Node>("tmp_controller_switch_node", sim_opts);
+    return std::make_shared<rclcpp::Node>("tmp_controller_switch_node", sim_opts);
+}
+
+bool ControlModeSwitcher::ensure_position_controller()
+{
+    if (position_controller_ != kAutoPositionController) {
+        return true;
+    }
+    // Resolved lazily at the first switch, not at construction: on URSim / the real robot the
+    // controller_stopper keeps the scaled JTC inactive until the robot program plays.
+    auto tmp_node = make_tmp_node();
+    auto client = tmp_node->create_client<controller_manager_msgs::srv::ListControllers>(
+        "/controller_manager/list_controllers");
+    if (!client->wait_for_service(10s)) {
+        RCLCPP_ERROR(LOGGER, "position controller 'auto': /controller_manager/list_controllers "
+                             "not available after 10s");
+        return false;
+    }
+    auto future = client->async_send_request(
+        std::make_shared<controller_manager_msgs::srv::ListControllers::Request>());
+    if (rclcpp::spin_until_future_complete(tmp_node, future, 7s) !=
+        rclcpp::FutureReturnCode::SUCCESS) {
+        RCLCPP_ERROR(LOGGER, "position controller 'auto': list_controllers call did not "
+                             "complete within 7s");
+        return false;
+    }
+    // Hold the response: future.get() moves it out, and a range-for over a member of that
+    // temporary would dangle once the temporary shared_ptr dies.
+    const auto response = future.get();
+    std::vector<std::pair<std::string, std::string>> loaded;
+    for (const auto & c : response->controller) {
+        loaded.emplace_back(c.name, c.state);
+    }
+    const PositionControllerChoice choice = select_position_controller(loaded);
+    if (choice.name.empty()) {
+        RCLCPP_ERROR(LOGGER, "position controller 'auto' could not be resolved: %s",
+                     choice.error.c_str());
+        return false;
+    }
+    position_controller_ = choice.name;
+    RCLCPP_INFO(LOGGER, "position controller auto-resolved: %s (%s)",
+                position_controller_.c_str(), choice.state.c_str());
+    return true;
+}
+
+bool ControlModeSwitcher::switch_controllers(const std::string & activate,
+                                             const std::string & deactivate)
+{
+    auto tmp_node = make_tmp_node();
     auto client = tmp_node->create_client<controller_manager_msgs::srv::SwitchController>(
         "/controller_manager/switch_controller");
 

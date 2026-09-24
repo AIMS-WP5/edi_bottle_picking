@@ -55,9 +55,9 @@ int main(int argc, char ** argv)
       config["mirror_to_isaac"] ? config["mirror_to_isaac"].as<std::string>() : "auto",
       LOGGER);
   // Position controller to switch back to after the DP segment;
-  // scaled_joint_trajectory_controller on the real robot.
+  // "auto" = resolved from controller_manager by ControlModeSwitcher.
   std::string default_controller = config["default_controller"]
-      ? config["default_controller"].as<std::string>() : "joint_trajectory_controller";
+      ? config["default_controller"].as<std::string>() : "auto";
   // Whether to run the MoveIt->real-time (DP/PyTorch) controller switchover during pick.
   // Disable for model-less runs (e.g. plain pick/place in sim with no DP node).
   bool run_dp_switchover = application.node_->get_parameter_or("run_dp_switchover", true);

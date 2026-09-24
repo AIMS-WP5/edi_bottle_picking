@@ -19,7 +19,7 @@ namespace constant_pose_utils
     {
     public:
     ConstantPoseUtils(manipulator_interface::ManipulatorInterface& manipulator,  bool pose_from_topic, std::string pose_topic_name,
-                      std::string default_controller = "joint_trajectory_controller",
+                      std::string default_controller = "auto",
                       bool debug = true, edi_bottle_picking::BackendFlags backend = {},
                       edi_bottle_picking::ScenarioPoses poses = {}); // Constructor
 
@@ -44,7 +44,7 @@ namespace constant_pose_utils
         geometry_msgs::msg::Pose curr_grasp_pose_;
         std::unique_ptr<edi_bottle_picking::ControlModeSwitcher> control_switcher_;
         /** Position controller to switch back to after the DP velocity segment.
-            scaled_joint_trajectory_controller on the real robot. */
+            "auto" = resolved from controller_manager by ControlModeSwitcher. */
         std::string default_controller_;
         /** Named SRDF poses; see scenario_poses.h for the edi-vs-isaac cell split. */
         edi_bottle_picking::ScenarioPoses poses_;

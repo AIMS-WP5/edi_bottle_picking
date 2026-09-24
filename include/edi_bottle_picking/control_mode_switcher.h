@@ -2,6 +2,7 @@
 #define CONTROL_MODE_SWITCHER_H_
 
 #include <rclcpp/rclcpp.hpp>
+#include <controller_manager_msgs/srv/list_controllers.hpp>
 #include <controller_manager_msgs/srv/switch_controller.hpp>
 #include <builtin_interfaces/msg/duration.hpp>
 #include <std_msgs/msg/empty.hpp>
@@ -26,13 +27,18 @@ namespace edi_bottle_picking
  *  (URPositionHardwareInterface drives velocity natively).  The Isaac gain-flip is
  *  best-effort and only attempted when \c is_isaac is true, so this class works
  *  unchanged across real / URSim / Isaac.
+ *
+ *  \c position_controller "auto" (or "") resolves the trajectory controller edi_ur actually
+ *  loaded -- scaled_joint_trajectory_controller on the real robot / URSim,
+ *  joint_trajectory_controller on Isaac / mock -- from controller_manager, on the first
+ *  switch (see select_position_controller()). An explicit name is used as given.
  */
 class ControlModeSwitcher
 {
 public:
     ControlModeSwitcher(rclcpp::Node::SharedPtr node,
                         bool is_isaac,
-                        std::string position_controller = "joint_trajectory_controller",
+                        std::string position_controller = "auto",
                         std::string velocity_controller = "forward_velocity_controller");
 
     /** \brief Activate the velocity controller, deactivate the position controller, then
@@ -76,6 +82,11 @@ public:
 
 private:
     bool switch_controllers(const std::string & activate, const std::string & deactivate);
+    /** Resolve an "auto" position controller once (no-op when explicit or already resolved).
+        Returns false, with an ERROR logged, when it cannot be resolved. */
+    bool ensure_position_controller();
+    /** Short-lived node for a blocking service call off the executor spinning node_. */
+    rclcpp::Node::SharedPtr make_tmp_node() const;
     void set_isaac_velocity_mode(bool velocity);   // best-effort SetBool, no-op if absent
     void dp_done_callback(const std_msgs::msg::Bool::SharedPtr msg);
     /** \brief Publish the socket-coordinate freeze handshake on /can_update_socket: false

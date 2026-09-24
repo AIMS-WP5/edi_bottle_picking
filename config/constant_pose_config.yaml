@@ -2,7 +2,7 @@ debug: true
 iterations: 5
 pose_from_topic: false
 pose_topic_name: "const_pose"
-default_controller: "joint_trajectory_controller" # scaled_joint_trajectory_controller for real robot
+default_controller: "auto"  # DP-switch position controller; auto = whichever JTC edi_ur loaded (scaled on real/URSim, plain on Isaac/mock); a name forces it
 
 # --- Named SRDF poses (edi_ur/edi_moveit_config/srdf/ur5e_macro.srdf.xacro) ---------------
 # There are TWO incompatible box-approach pose sets, one per physical cell, and they put the

@@ -18,9 +18,9 @@ int total_iterations = config["iterations"].as<int>();
 bool pose_from_topic = config["pose_from_topic"].as<bool>();
 std::string pose_topic_name = config["pose_topic_name"].as<std::string>();
 // Position controller to restore after the DP velocity segment (ca1e3b0 parity):
-// scaled_joint_trajectory_controller on the real robot.
+// "auto" = resolved from controller_manager by ControlModeSwitcher.
 std::string default_controller = config["default_controller"]
-    ? config["default_controller"].as<std::string>() : "joint_trajectory_controller";
+    ? config["default_controller"].as<std::string>() : "auto";
 // Named SRDF poses: YAML defaults here, `pose_set` / per-pose ROS params applied in main()
 // once the node exists. See scenario_poses.h for the edi-vs-isaac cell split.
 edi_bottle_picking::ScenarioPoses scenario_poses = edi_bottle_picking::load_scenario_poses(config);

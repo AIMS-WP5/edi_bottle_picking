@@ -43,6 +43,7 @@ add_executable(grasping_test src/grasping_test.cpp
 				   src/grasping_test_utils.cpp
 				   src/vacuum_commander.cpp
 				   src/control_mode_switcher.cpp
+				   src/position_controller_select.cpp
 				   src/scenario_poses.cpp)
 
 target_include_directories(grasping_test PUBLIC
@@ -74,6 +75,7 @@ add_executable(constant_pose src/constant_pose.cpp
 				   src/constant_pose_utils.cpp
 				   src/vacuum_commander.cpp
 				   src/control_mode_switcher.cpp
+				   src/position_controller_select.cpp
 				   src/scenario_poses.cpp)
 
 target_include_directories(constant_pose PUBLIC
@@ -104,6 +106,7 @@ add_executable(conveyor_feeding src/conveyor_feeding.cpp
 				   src/conveyor_feeding_utils.cpp
 				   src/vacuum_commander.cpp
 				   src/control_mode_switcher.cpp
+				   src/position_controller_select.cpp
 				   src/scenario_poses.cpp)
 
 target_include_directories(conveyor_feeding PUBLIC
@@ -179,6 +182,25 @@ if(BUILD_TESTING)
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>)
   ament_target_dependencies(test_backend_flags rclcpp manipulator_interface std_srvs)
+
+  # Pins the "auto" DP-switch position-controller resolution (scaled vs plain JTC).
+  ament_add_gtest(test_position_controller_select test/test_position_controller_select.cpp
+                  src/position_controller_select.cpp)
+  target_include_directories(test_position_controller_select PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>)
+
+  # ControlModeSwitcher "auto" end to end against a fake controller_manager (in-process services).
+  # Private ROS domain (set in-test via InitOptions; distinct per package so parallel colcon
+  # test runs cannot cross-talk): the fake registers the real /controller_manager/* names.
+  ament_add_gtest(test_control_mode_switcher_auto test/test_control_mode_switcher_auto.cpp
+                  src/control_mode_switcher.cpp src/position_controller_select.cpp)
+  target_include_directories(test_control_mode_switcher_auto PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>)
+  ament_target_dependencies(test_control_mode_switcher_auto rclcpp controller_manager_msgs
+    builtin_interfaces std_msgs std_srvs)
+  target_compile_definitions(test_control_mode_switcher_auto PRIVATE TEST_ROS_DOMAIN_ID=211)
 
   find_package(ament_lint_auto REQUIRED)
   # the following line skips the linter which checks for copyrights

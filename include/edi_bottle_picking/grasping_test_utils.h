@@ -19,7 +19,7 @@ namespace grasping_test_utils
     {
     public:
     GraspingTestUtils(manipulator_interface::ManipulatorInterface& manipulator, std::string grasp_pose_topic,
-                      std::string default_controller = "joint_trajectory_controller",
+                      std::string default_controller = "auto",
                       bool debug = false, edi_bottle_picking::BackendFlags backend = {},
                       bool run_dp_switchover = true,
                       edi_bottle_picking::ScenarioPoses poses = {}); // Constructor
@@ -56,7 +56,7 @@ namespace grasping_test_utils
         bool simulation_;
         bool run_dp_switchover_;
         /** Position controller to switch back to after the DP velocity segment.
-            scaled_joint_trajectory_controller on the real robot. */
+            "auto" = resolved from controller_manager by ControlModeSwitcher. */
         std::string default_controller_;
         /** Named SRDF poses; see scenario_poses.h for the edi-vs-isaac cell split. */
         edi_bottle_picking::ScenarioPoses poses_;
