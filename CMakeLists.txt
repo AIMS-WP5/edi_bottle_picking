@@ -54,6 +54,9 @@ ament_target_dependencies(
   manipulator_interface
   edi_robot_msgs
   ur_msgs
+)
+
+target_link_libraries(grasping_test
   yaml-cpp
 )
 
@@ -74,8 +77,11 @@ ament_target_dependencies(
   moveit_visual_tools
   manipulator_interface
   edi_robot_msgs
-  yaml-cpp
   controller_manager_msgs
+)
+
+target_link_libraries(constant_pose
+  yaml-cpp
 )
 
 add_executable(conveyor_feeding src/conveyor_feeding.cpp
@@ -96,8 +102,11 @@ ament_target_dependencies(
   manipulator_interface
   edi_robot_msgs
   ur_msgs
-  yaml-cpp
   controller_manager_msgs
+)
+
+target_link_libraries(conveyor_feeding
+  yaml-cpp
 )
 
 install(
