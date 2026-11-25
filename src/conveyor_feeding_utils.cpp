@@ -26,16 +26,6 @@ ConveyorFeedingUtils::~ConveyorFeedingUtils()
     // Destructor implementation
 }
 
-bool ConveyorFeedingUtils::add_box() {
-	moveit_msgs::msg::CollisionObject coll_obj;
-	geometry_msgs::msg::Pose pose;
-	pose.position.x = -0.45;
-	pose.position.y = -0.50;
-	pose.position.z = 0.93;
-	bool success = manipulator_.add_collision_box(pose, "world", coll_obj, 0.40, 0.30, 0.15, 0.015);
-	return success;
-}
-
 geometry_msgs::msg::Pose ConveyorFeedingUtils::get_next_published_pose(std::string topic_name, bool stamped_topic, int timeout_sec)
 {
     auto node = rclcpp::Node::make_shared("tmp_sub_node");
@@ -194,7 +184,7 @@ bool ConveyorFeedingUtils::run()
 		RCLCPP_INFO(LOGGER, "Suction enabled!");
 	}
 
-	success_ = manipulator_.cartesian_goal(pick_poses[1], 15);
+	success_ = manipulator_.cartesian_goal(pick_poses[1]);
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
@@ -214,7 +204,7 @@ bool ConveyorFeedingUtils::run()
 		return 0;
 	}
 
-	success_ = manipulator_.cartesian_goal(pick_poses[0], 15);
+	success_ = manipulator_.cartesian_goal(pick_poses[0]);
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;

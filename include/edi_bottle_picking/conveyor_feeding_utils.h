@@ -36,8 +36,6 @@ namespace conveyor_feeding_utils
     geometry_msgs::msg::Pose get_curr_grasp_pose();
     void grasp_pose_callback(const geometry_msgs::msg::PoseStamped::SharedPtr msg);
 
-    bool add_box();
-
     bool get_grasped_status(int timeout_sec = 5);
 
     bool switch_controllers(std::string start_ctrl_name, std::string stop_ctrl_name);

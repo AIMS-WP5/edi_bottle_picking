@@ -141,7 +141,7 @@ bool ConstantPoseUtils::pickup()
 		return 0;
 	}
 
-	success_ = manipulator_.cartesian_goal(pick_poses[1], 15);
+	success_ = manipulator_.cartesian_goal(pick_poses[1]);
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
@@ -157,7 +157,7 @@ bool ConstantPoseUtils::pickup()
 		RCLCPP_INFO(LOGGER, "Suction enabled!");
 	}
 
-	success_ = manipulator_.cartesian_goal(pick_poses[0], 15);
+	success_ = manipulator_.cartesian_goal(pick_poses[0]);
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
@@ -250,7 +250,7 @@ bool ConstantPoseUtils::pickup()
 		return 0;
 	}
 
-	success_ = manipulator_.cartesian_goal(pick_poses[1], 15);
+	success_ = manipulator_.cartesian_goal(pick_poses[1]);
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
@@ -268,7 +268,7 @@ bool ConstantPoseUtils::pickup()
 	geometry_msgs::msg::Pose retreat_pose = pick_poses[1];
 	retreat_pose.position.z = retreat_pose.position.z + 0.01;
 
-	success_ = manipulator_.cartesian_goal(retreat_pose, 10);
+	success_ = manipulator_.cartesian_goal(retreat_pose);
 	if(!success_){
 		RCLCPP_ERROR(LOGGER, "Pick action failed!");
 		return 0;
