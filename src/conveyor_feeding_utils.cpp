@@ -914,10 +914,10 @@ std::optional<bool> ConveyorFeedingUtils::run_moveit_insert_segment(int socket_t
 		}
 
 		// GUARD 1 -- waypoint cap: reject a clearly twisted fallback plan before executing it.
-		if (pr.geometric_waypoints > moveit_insert_fallback_max_waypoints_) {
+		if (pr.waypoint_count > moveit_insert_fallback_max_waypoints_) {
 			RCLCPP_ERROR(LOGGER, "MoveIt insertion: GUARD1 fallback plan has %.0f waypoints > cap %d "
 			             "(twisted/contorted path); failing iteration before the long move",
-			             pr.geometric_waypoints, moveit_insert_fallback_max_waypoints_);
+			             pr.waypoint_count, moveit_insert_fallback_max_waypoints_);
 			control_switcher_->release_socket();
 			return false;
 		}
@@ -944,7 +944,7 @@ std::optional<bool> ConveyorFeedingUtils::run_moveit_insert_segment(int socket_t
 			return false;
 		}
 		RCLCPP_INFO(LOGGER, "MoveIt insertion: reached above-socket via guarded pose_goal fallback (%.0f waypoints)",
-		            pr.geometric_waypoints);
+		            pr.waypoint_count);
 	}
 
 	// Move 2: straight-down Cartesian descent into the socket. Collision checking is
