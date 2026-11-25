@@ -1,6 +1,6 @@
 debug: true
 iterations: 5
 pose_from_topic: false
-pose_topic_name: "const_pose"
+pose_topic_name: "const_pose" # used if pose_from_topic=true
 default_controller: "scaled_joint_trajectory_controller"
 socket_scenario: "static" # static or moving
