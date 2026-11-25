@@ -22,8 +22,6 @@ int main(int argc, char ** argv)
   rclcpp::init(argc, argv);
   GraspingTest application;
 
-  // We spin up a SingleThreadedExecutor for the current state monitor to get information
-  // about the robot's state.
   rclcpp::executors::MultiThreadedExecutor executor;
   executor.add_node(application.node_);
 
