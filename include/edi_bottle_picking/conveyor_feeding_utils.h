@@ -17,7 +17,7 @@ namespace conveyor_feeding_utils
 	class ConveyorFeedingUtils
     {
     public:
-    ConveyorFeedingUtils(manipulator_interface::ManipulatorInterface& manipulator, std::string grasp_pose_topic, std::string default_controller, bool debug = false); // Constructor
+    ConveyorFeedingUtils(manipulator_interface::ManipulatorInterface& manipulator, std::string grasp_pose_topic, std::string default_controller, std::string socket_scenario, bool debug = false); // Constructor
 
     ~ConveyorFeedingUtils(); // Destructor
 
@@ -53,6 +53,7 @@ namespace conveyor_feeding_utils
         rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr pub_can_update_socket_;
         geometry_msgs::msg::Pose curr_grasp_pose_;
         std::string default_controller_;
+        std::string socket_scenario_;
 	};
 
 }

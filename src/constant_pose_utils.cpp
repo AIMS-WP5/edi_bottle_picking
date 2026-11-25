@@ -8,8 +8,8 @@ namespace constant_pose_utils
 
 const rclcpp::Logger LOGGER = rclcpp::get_logger("constant_pose_utils");
 
-ConstantPoseUtils::ConstantPoseUtils(manipulator_interface::ManipulatorInterface& manipulator, bool pose_from_topic, std::string pose_topic_name, std::string default_controller, bool debug)
-    : manipulator_(manipulator), debug_(debug), use_pose_from_topic_(pose_from_topic), default_controller_(default_controller)
+ConstantPoseUtils::ConstantPoseUtils(manipulator_interface::ManipulatorInterface& manipulator, bool pose_from_topic, std::string pose_topic_name, std::string default_controller, std::string socket_scenario, bool debug)
+    : manipulator_(manipulator), debug_(debug), use_pose_from_topic_(pose_from_topic), default_controller_(default_controller), socket_scenario_(socket_scenario)
 {
 	if (use_pose_from_topic_) {
 		sub_grasp_pose_ = manipulator.node_->create_subscription<geometry_msgs::msg::PoseStamped>(
@@ -173,8 +173,10 @@ bool ConstantPoseUtils::pickup()
 	}
 
 	auto socket_upd_msg = std_msgs::msg::Bool();
-	socket_upd_msg.data = false;
-	pub_can_update_socket_->publish(socket_upd_msg);
+	if (socket_scenario_ == "static"){
+		socket_upd_msg.data = false;
+		pub_can_update_socket_->publish(socket_upd_msg);
+	}
 
 	if(debug_){
 		manipulator_.world_marker_->prompt("press 'Next' to move above socket");

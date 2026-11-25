@@ -8,8 +8,8 @@ namespace conveyor_feeding_utils
 
 const rclcpp::Logger LOGGER = rclcpp::get_logger("conveyor_feeding_utils");
 
-ConveyorFeedingUtils::ConveyorFeedingUtils(manipulator_interface::ManipulatorInterface& manipulator, std::string grasp_pose_topic, std::string default_controller, bool debug)
-    : manipulator_(manipulator), debug_(debug), default_controller_(default_controller)
+ConveyorFeedingUtils::ConveyorFeedingUtils(manipulator_interface::ManipulatorInterface& manipulator, std::string grasp_pose_topic, std::string default_controller, std::string socket_scenario, bool debug)
+    : manipulator_(manipulator), debug_(debug), default_controller_(default_controller), socket_scenario_(socket_scenario)
 {
 	sub_grasp_pose_ = manipulator.node_->create_subscription<geometry_msgs::msg::PoseStamped>(
 		grasp_pose_topic, 10, std::bind(&ConveyorFeedingUtils::grasp_pose_callback, this, _1)
@@ -239,8 +239,10 @@ bool ConveyorFeedingUtils::run()
 	}
 
 	auto socket_upd_msg = std_msgs::msg::Bool();
-	socket_upd_msg.data = false;
-	pub_can_update_socket_->publish(socket_upd_msg);
+	if (socket_scenario_ == "static"){
+		socket_upd_msg.data = false;
+		pub_can_update_socket_->publish(socket_upd_msg);
+	}
 
 	if(debug_){
 		manipulator_.world_marker_->prompt("press 'Next' to move to ai start");

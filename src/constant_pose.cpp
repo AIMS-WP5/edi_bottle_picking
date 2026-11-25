@@ -18,14 +18,13 @@ int total_iterations = config["iterations"].as<int>();
 bool pose_from_topic = config["pose_from_topic"].as<bool>();
 std::string pose_topic_name = config["pose_topic_name"].as<std::string>();
 std::string default_controller = config["default_controller"].as<std::string>();
+std::string socket_scenario = config["socket_scenario"].as<std::string>();
 
 int main(int argc, char ** argv)
 {
   rclcpp::init(argc, argv);
   ConstantPose application;
 
-  // We spin up a SingleThreadedExecutor for the current state monitor to get information
-  // about the robot's state.
   rclcpp::executors::MultiThreadedExecutor executor;
   executor.add_node(application.node_);
 
@@ -45,7 +44,7 @@ int main(int argc, char ** argv)
   ManipulatorInterface manipulator(application.node_, application.move_group_ptr, application.gripper_action_client_ptr, 
                                    application.tf_buffer_ptr);
 
-  ConstantPoseUtils constant_pose_utils(manipulator, pose_from_topic, pose_topic_name, default_controller, debug);
+  ConstantPoseUtils constant_pose_utils(manipulator, pose_from_topic, pose_topic_name, default_controller, socket_scenario, debug);
 
   rclcpp::Duration d = rclcpp::Duration::from_seconds(1.0);
   if(!application.gripper_action_client_ptr->wait_for_action_server(d.to_chrono<std::chrono::duration<double>>())) {

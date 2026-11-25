@@ -17,14 +17,13 @@ bool debug = config["debug"].as<bool>();
 int total_iterations = config["iterations"].as<int>();
 std::string grasp_pose_topic = config["grasp_pose_topic"].as<std::string>();
 std::string default_controller = config["default_controller"].as<std::string>();
+std::string socket_scenario = config["socket_scenario"].as<std::string>();
 
 int main(int argc, char ** argv)
 {
   rclcpp::init(argc, argv);
   ConveyorFeeding application;
 
-  // We spin up a SingleThreadedExecutor for the current state monitor to get information
-  // about the robot's state.
   rclcpp::executors::MultiThreadedExecutor executor;
   executor.add_node(application.node_);
 
@@ -44,7 +43,7 @@ int main(int argc, char ** argv)
   ManipulatorInterface manipulator(application.node_, application.move_group_ptr, application.gripper_action_client_ptr, 
                                    application.tf_buffer_ptr);
 
-  ConveyorFeedingUtils conveyor_feeding_utils(manipulator, grasp_pose_topic, default_controller, debug);
+  ConveyorFeedingUtils conveyor_feeding_utils(manipulator, grasp_pose_topic, default_controller, socket_scenario, debug);
 
   rclcpp::Duration d = rclcpp::Duration::from_seconds(1.0);
   if(!application.gripper_action_client_ptr->wait_for_action_server(d.to_chrono<std::chrono::duration<double>>())) {
@@ -57,7 +56,6 @@ int main(int argc, char ** argv)
 
   RCLCPP_INFO(LOGGER, "PLANNER FRAME: %s", application.move_group_ptr->getPlanningFrame().c_str());
 
-  // conveyor_feeding_utils.add_box();
 
   bool success;
   int iter_count = 0;

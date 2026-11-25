@@ -17,7 +17,7 @@ namespace constant_pose_utils
 	class ConstantPoseUtils
     {
     public:
-    ConstantPoseUtils(manipulator_interface::ManipulatorInterface& manipulator,  bool pose_from_topic, std::string pose_topic_name, std::string default_controller, bool debug = true); // Constructor
+    ConstantPoseUtils(manipulator_interface::ManipulatorInterface& manipulator,  bool pose_from_topic, std::string pose_topic_name, std::string default_controller, std::string socket_scenario, bool debug = true); // Constructor
 
     ~ConstantPoseUtils(); // Destructor
 
@@ -42,6 +42,7 @@ namespace constant_pose_utils
         rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr sub_dp_exec_done_;
         rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr pub_can_update_socket_;
         std::string default_controller_;
+        std::string socket_scenario_;
 	};
 
 }
